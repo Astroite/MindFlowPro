@@ -4,22 +4,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>MindFlow - 本地化视觉思维导图</title>
-    <meta name="description" content="一个基于浏览器的本地优先思维导图工具，支持图片与无限画布。">
 
-    <!-- 样式表 -->
     <link rel="stylesheet" href="css/style.css">
 
-    <!-- 第三方库 -->
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/localforage/1.10.0/localforage.min.js"></script>
 </head>
 <body>
 
-<!-- 隐藏的文件输入框，用于导入文件 -->
 <input type="file" id="importInput" style="display: none;" accept=".json,.mindflow">
 
 <div class="app-container">
-    <!-- 左侧边栏 -->
     <div class="sidebar closed" id="sidebar">
         <div class="sidebar-header">
             <div class="brand">MindFlow</div>
@@ -27,7 +22,6 @@
                 <select id="projSelect" class="project-select">
                     <option value="" disabled selected>正在加载...</option>
                 </select>
-                <!-- [修改] 增加导入导出按钮 -->
                 <div class="btn-group-mini">
                     <button class="btn-icon" title="导出到本地磁盘" onclick="app.data.exportProjectToFile()">💾</button>
                     <button class="btn-icon" title="从磁盘打开项目" onclick="app.ui.triggerImport()">📂</button>
@@ -37,17 +31,19 @@
         </div>
 
         <div class="sidebar-content">
-            <div id="resList" class="res-list">
+            <div id="resList" class="res-list tree-view">
+                <!-- 资源树将在这里动态生成 -->
                 <div class="empty-tip">暂无资源</div>
             </div>
         </div>
 
-        <div class="sidebar-footer">
-            <button class="btn-primary full-width" onclick="app.ui.openModal('resModal')">+ 添加参考资源</button>
+        <!-- [修改] 底部按钮组 -->
+        <div class="sidebar-footer" style="display:flex; gap:5px;">
+            <button class="btn-secondary" style="flex:1;" onclick="app.data.createFolder()" title="新建文件夹">📁 文件夹</button>
+            <button class="btn-primary" style="flex:2;" onclick="app.ui.openResModal()">+ 添加资源</button>
         </div>
     </div>
 
-    <!-- 主画布区域 -->
     <div class="main-area">
         <div class="toolbar">
             <button class="tool-btn" onclick="app.ui.toggleSidebar()" title="切换侧边栏">☰</button>
@@ -72,45 +68,66 @@
     </div>
 </div>
 
-<!-- 弹窗：添加资源 -->
+<!-- 弹窗：添加/编辑资源 -->
 <div class="modal-overlay" id="resModal" style="display: none;">
     <div class="modal-box">
-        <h3>添加资源</h3>
+        <h3 id="resModalTitle">添加资源</h3>
+
         <div class="form-group">
             <label>类型</label>
-            <!-- [修改] 更新后的资源类型列表 -->
             <select id="resType" class="form-input" onchange="app.ui.toggleResInput()">
                 <option value="image">🖼️ 图片 (Image)</option>
-                <option value="md">📝 文档 (Markdown/Text)</option>
+                <option value="md">📝 文档 (Markdown)</option>
+                <option value="code">💻 代码段 (Code)</option>
+                <option value="color">🎨 色卡 (Palette)</option>
+                <option value="audio">🎤 音频 (Audio)</option>
                 <option value="link">🔗 链接 (Link)</option>
             </select>
         </div>
+
+        <!-- [新增] 文件夹选择 -->
+        <div class="form-group">
+            <label>位置 (文件夹)</label>
+            <select id="resParentId" class="form-input">
+                <option value="">(根目录)</option>
+                <!-- 动态填充文件夹列表 -->
+            </select>
+        </div>
+
         <div class="form-group">
             <label>名称</label>
             <input type="text" id="resName" class="form-input" placeholder="输入资源名称">
         </div>
 
-        <!-- 文件上传区：支持图片和文本文件 -->
-        <div class="form-group" id="groupFile">
-            <label>选择文件</label>
-            <input type="file" id="resFile" class="form-input" accept="image/*">
-            <small style="color:#666; font-size:12px;">图片会直接保存到本地数据库，建议压缩后上传。</small>
+        <!-- 动态输入区 -->
+        <div class="form-group dynamic-input" id="groupFile">
+            <label id="fileLabel">选择文件</label>
+            <input type="file" id="resFile" class="form-input">
+            <small style="color:#666; font-size:12px;">文件存储于本地数据库，建议控制大小。</small>
         </div>
 
-        <!-- 链接输入区 -->
-        <div class="form-group" id="groupLink" style="display: none;">
-            <label>链接地址</label>
-            <input type="text" id="resContent" class="form-input" placeholder="https://example.com">
+        <div class="form-group dynamic-input" id="groupText" style="display: none;">
+            <label id="textLabel">内容</label>
+            <input type="text" id="resTextInput" class="form-input" placeholder="https://..." style="display:none;">
+            <textarea id="resTextArea" class="form-input" rows="6" placeholder="在此输入内容..." style="font-family: monospace;"></textarea>
+        </div>
+
+        <div class="form-group dynamic-input" id="groupColor" style="display: none;">
+            <label>选择颜色</label>
+            <div style="display:flex; align-items:center; gap:10px;">
+                <input type="color" id="resColorInput" style="width:50px; height:40px; border:none; padding:0;">
+                <span id="resColorValue" style="font-family:monospace; font-weight:bold;">#000000</span>
+            </div>
         </div>
 
         <div class="modal-actions">
             <button class="btn-text" onclick="app.ui.closeModal('resModal')">取消</button>
-            <button class="btn-primary" onclick="app.data.addResource()">确认添加</button>
+            <button class="btn-primary" onclick="app.data.saveResource()">保存</button>
         </div>
     </div>
 </div>
 
-<!-- 悬浮菜单：节点编辑 -->
+<!-- 节点菜单 -->
 <div class="node-menu" id="nodeMenu" style="display: none;">
     <div class="form-group">
         <label>节点名称</label>
