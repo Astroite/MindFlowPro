@@ -1,6 +1,6 @@
 /**
  * MindFlow - App Logic
- * 更新内容：项目删除功能、ResizeObserver 自适应画布、移动端交互优化
+ * 更新内容：支持顶部菜单栏直接重命名项目
  */
 
 const app = {
@@ -23,10 +23,9 @@ const app = {
         links: [],
         resources: [],
         camera: { x: 0, y: 0, k: 1 },
-        isSimulating: false,
+        simulation: null,
         selectedNode: null,
-        tempFileBase64: null,
-        simulation: null
+        tempFileBase64: null
     },
 
     // --- 模块 1: 存储 (Storage) ---
@@ -70,20 +69,40 @@ const app = {
             return id;
         },
 
-        // [新增] 删除项目
+        // [新增] 重命名项目
+        renameProject: async function(id, newName) {
+            if (!id || !newName) return;
+            try {
+                // 1. 更新索引
+                const idx = app.state.projectsIndex.findIndex(p => p.id === id);
+                if (idx !== -1) {
+                    app.state.projectsIndex[idx].name = newName;
+                    await this.saveIndex();
+                }
+
+                // 2. 更新项目内部数据
+                const proj = await localforage.getItem(id);
+                if (proj) {
+                    proj.name = newName;
+                    await localforage.setItem(id, proj);
+                }
+
+                app.ui.updateProjectSelect();
+                app.ui.toast('项目重命名成功');
+            } catch (e) {
+                app.ui.toast('重命名失败: ' + e.message);
+            }
+        },
+
         deleteProject: async function(id) {
             if (!id) return;
             try {
-                // 1. 从 IndexedDB 删除项目数据
                 await localforage.removeItem(id);
-
-                // 2. 更新索引
                 app.state.projectsIndex = app.state.projectsIndex.filter(p => p.id !== id);
                 await this.saveIndex();
 
                 app.ui.toast('项目已删除');
 
-                // 3. UI 状态处理
                 if (app.state.currentId === id) {
                     app.state.currentId = null;
                     app.state.nodes = [];
@@ -91,14 +110,12 @@ const app = {
                     app.state.resources = [];
                     app.graph.updateSimulation();
                     app.ui.renderResourceList();
+                    // 清空标题栏
+                    document.getElementById('projTitleInput').value = '';
                     document.getElementById('saveStatus').innerText = '已就绪';
                 }
-
-                // 4. 刷新下拉框
                 app.ui.updateProjectSelect();
-
             } catch (e) {
-                console.error(e);
                 app.ui.toast('删除失败: ' + e.message);
             }
         },
@@ -113,6 +130,9 @@ const app = {
                 app.state.links = JSON.parse(JSON.stringify(proj.links || []));
                 app.state.resources = JSON.parse(JSON.stringify(proj.resources || []));
 
+                // [更新] 设置顶部标题输入框
+                document.getElementById('projTitleInput').value = proj.name;
+
                 app.graph.resetCamera();
                 app.graph.imageCache.clear();
                 app.ui.renderResourceList();
@@ -123,10 +143,6 @@ const app = {
 
             } catch (e) {
                 app.ui.toast('加载失败: ' + e.message);
-                // 如果加载失败（可能索引还在但数据没了），尝试清理索引
-                if (e.message.includes('不存在')) {
-                    // 可选：自动清理无效索引
-                }
             }
         },
 
@@ -134,8 +150,8 @@ const app = {
             if (!app.state.currentId) return app.ui.toast('请先创建或选择项目');
 
             document.getElementById('saveStatus').innerText = '保存中...';
-
-            const currentProjName = app.state.projectsIndex.find(p => p.id === app.state.currentId)?.name || '未命名项目';
+            // 获取最新名称（可能刚修改过）
+            const currentProjName = document.getElementById('projTitleInput').value || '未命名项目';
 
             const projData = {
                 id: app.state.currentId,
@@ -177,8 +193,6 @@ const app = {
             this.canvas = document.getElementById('mainCanvas');
             this.ctx = this.canvas.getContext('2d');
 
-            // [优化] 使用 ResizeObserver 监听容器大小变化
-            // 这能完美解决侧边栏收起/展开导致画布拉伸的问题
             const resizeObserver = new ResizeObserver(() => {
                 this.resize();
             });
@@ -189,7 +203,7 @@ const app = {
                 .force("charge", d3.forceManyBody().strength(app.config.chargeStrength))
                 .force("collide", d3.forceCollide().radius(app.config.collideRadius))
                 .force("center", d3.forceCenter(0, 0).strength(0.02))
-                .on("tick", () => { /* Render logic is in renderLoop */ });
+                .on("tick", () => { });
 
             this.bindEvents();
             requestAnimationFrame(() => this.renderLoop());
@@ -197,20 +211,15 @@ const app = {
 
         resize: function() {
             const wrapper = document.getElementById('canvasWrapper');
-            // 获取容器的真实像素尺寸
             this.width = wrapper.clientWidth;
             this.height = wrapper.clientHeight;
-
-            // 调整 Canvas 分辨率以匹配显示尺寸（防止模糊或拉伸）
             this.canvas.width = this.width;
             this.canvas.height = this.height;
 
-            // 如果是首次初始化，居中相机
             if (!app.state.currentId && app.state.nodes.length === 0) {
                 this.resetCamera();
             }
-            // 触发一次渲染
-            app.state.simulation.alpha(0.1).restart();
+            if (app.state.simulation) app.state.simulation.alpha(0.1).restart();
         },
 
         resetCamera: function() {
@@ -267,7 +276,7 @@ const app = {
             ctx.translate(cam.x, cam.y);
             ctx.scale(cam.k, cam.k);
 
-            // Draw Links
+            // 绘制连线
             ctx.beginPath();
             ctx.strokeStyle = '#cbd5e1';
             ctx.lineWidth = 2;
@@ -280,22 +289,19 @@ const app = {
             });
             ctx.stroke();
 
-            // Draw Nodes
+            // 绘制节点
             app.state.nodes.forEach(n => {
                 const r = n.type === 'root' ? app.config.nodeRadius : app.config.subRadius;
 
-                // Shadow
                 ctx.shadowColor = 'rgba(0,0,0,0.1)';
                 ctx.shadowBlur = 10;
 
-                // Background
                 ctx.beginPath();
                 ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
                 ctx.fillStyle = 'white';
                 ctx.fill();
                 ctx.shadowBlur = 0;
 
-                // Image/Icon
                 let hasImg = false;
                 if (n.resId) {
                     const res = app.state.resources.find(r => r.id === n.resId);
@@ -310,14 +316,12 @@ const app = {
                     }
                 }
 
-                // Border
                 ctx.beginPath();
                 ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
                 ctx.lineWidth = 3;
                 ctx.strokeStyle = (app.state.selectedNode === n) ? '#e74c3c' : (n.type === 'root' ? '#2c3e50' : '#667eea');
                 ctx.stroke();
 
-                // Label
                 ctx.fillStyle = '#334155';
                 ctx.font = 'bold 12px Arial';
                 ctx.textAlign = 'center';
@@ -329,7 +333,6 @@ const app = {
                     ctx.fillText(n.label, n.x, textY);
                 }
 
-                // Add Button (Green Dot)
                 const btnX = n.x + r * 0.707;
                 const btnY = n.y + r * 0.707;
                 ctx.beginPath();
@@ -371,7 +374,6 @@ const app = {
         bindEvents: function() {
             const canvas = this.canvas;
 
-            // 支持触摸和鼠标的坐标获取
             const getPos = (e) => {
                 const rect = canvas.getBoundingClientRect();
                 const k = app.state.camera.k;
@@ -383,10 +385,8 @@ const app = {
                 };
             };
 
-            // 统一处理 Start 事件 (MouseDown / TouchStart)
             const handleStart = (e) => {
                 if (e.target !== canvas) return;
-                // e.preventDefault(); // 注意：可能需要阻止默认行为以防止滚动
 
                 const m = getPos(e);
                 let hitNode = null;
@@ -416,7 +416,6 @@ const app = {
                     app.state.selectedNode = hitNode;
                 } else {
                     this.isPanning = true;
-                    // 兼容触摸和鼠标
                     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
                     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
                     this.startPan = { x: clientX, y: clientY };
@@ -452,24 +451,20 @@ const app = {
                 this.isPanning = false;
             };
 
-            // 鼠标事件
             canvas.addEventListener('mousedown', handleStart);
             canvas.addEventListener('mousemove', handleMove);
             window.addEventListener('mouseup', handleEnd);
 
-            // 触摸事件 (移动端支持)
             canvas.addEventListener('touchstart', handleStart, {passive: false});
             canvas.addEventListener('touchmove', handleMove, {passive: false});
             window.addEventListener('touchend', handleEnd);
 
-            // 滚轮缩放
             canvas.addEventListener('wheel', (e) => {
                 e.preventDefault();
                 const factor = e.deltaY < 0 ? 1.1 : 0.9;
                 app.state.camera.k = Math.max(0.1, Math.min(5, app.state.camera.k * factor));
             });
 
-            // 双击
             canvas.addEventListener('dblclick', (e) => {
                 const m = getPos(e);
                 const hitNode = app.state.nodes.find(n => {
@@ -485,10 +480,20 @@ const app = {
 
     // --- 模块 3: 数据处理 (Data) ---
     data: {
+        // [新增] 处理项目重命名 UI 逻辑
+        renameProject: function(newName) {
+            if (!app.state.currentId) {
+                app.ui.toast('请先创建项目');
+                document.getElementById('projTitleInput').value = '';
+                return;
+            }
+            if (!newName.trim()) return;
+            app.storage.renameProject(app.state.currentId, newName.trim());
+        },
+
         addResource: function() {
             const type = document.getElementById('resType').value;
             const name = document.getElementById('resName').value;
-
             if (!name) return app.ui.toast('请输入资源名称');
 
             const res = {
@@ -581,7 +586,6 @@ const app = {
             });
         },
 
-        // [新增] 确认并删除项目
         confirmDeleteProject: function() {
             if (!app.state.currentId) return;
             if (confirm('确定要永久删除当前项目吗？此操作无法撤销。')) {
@@ -671,7 +675,6 @@ const app = {
         },
 
         toggleSidebar: function() {
-            // CSS 会处理动画，app.graph.init 里的 ResizeObserver 会处理画布重绘
             document.getElementById('sidebar').classList.toggle('closed');
         },
 
