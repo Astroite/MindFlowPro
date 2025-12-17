@@ -32,12 +32,10 @@
 
         <div class="sidebar-content">
             <div id="resList" class="res-list tree-view">
-                <!-- 资源树将在这里动态生成 -->
                 <div class="empty-tip">暂无资源</div>
             </div>
         </div>
 
-        <!-- [修改] 底部按钮组 -->
         <div class="sidebar-footer" style="display:flex; gap:5px;">
             <button class="btn-secondary" style="flex:1;" onclick="app.data.createFolder()" title="新建文件夹">📁 文件夹</button>
             <button class="btn-primary" style="flex:2;" onclick="app.ui.openResModal()">+ 添加资源</button>
@@ -56,10 +54,20 @@
             <div class="divider"></div>
             <button class="tool-btn primary" onclick="app.graph.addRootNode()">🎯 根节点</button>
             <button class="tool-btn" onclick="app.graph.resetCamera()">🔎 归位</button>
+
             <div class="spacer"></div>
+
             <div id="saveStatus" class="status-text">就绪</div>
             <button class="tool-btn" onclick="app.storage.forceSave()" title="保存到浏览器数据库">☁️ 保存</button>
             <button class="tool-btn danger" onclick="app.graph.clearAll()">🗑️ 清空</button>
+
+            <div class="divider"></div>
+
+            <!-- [新增] 跳转到说明书/个人网站的按钮 -->
+            <!-- 请将下面的 href 替换为你的真实网址 -->
+            <a href="https://astroite.com/article/2eh5d6so/" target="_blank" class="tool-btn" style="text-decoration: none; color: #667eea;" title="查看电子说明书">
+                ❓ 说明书
+            </a>
         </div>
 
         <div class="canvas-wrapper" id="canvasWrapper">
@@ -85,12 +93,10 @@
             </select>
         </div>
 
-        <!-- [新增] 文件夹选择 -->
         <div class="form-group">
             <label>位置 (文件夹)</label>
             <select id="resParentId" class="form-input">
                 <option value="">(根目录)</option>
-                <!-- 动态填充文件夹列表 -->
             </select>
         </div>
 
@@ -99,7 +105,6 @@
             <input type="text" id="resName" class="form-input" placeholder="输入资源名称">
         </div>
 
-        <!-- 动态输入区 -->
         <div class="form-group dynamic-input" id="groupFile">
             <label id="fileLabel">选择文件</label>
             <input type="file" id="resFile" class="form-input">

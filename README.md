@@ -1,60 +1,76 @@
-# MindFlowPro
-My Custom Mind Flow Tools
+# MindFlow - 视觉化灵感与资源管理工具
 
-MindFlow - Visual Asset Mind Map
+MindFlow 是一个本地优先 (Local-First) 的视觉化思维导图与资源管理工具。它专为创作者、设计师和开发者打造，旨在通过直观的物理节点网络，帮助你整理图片、代码、文档和灵感碎片。
 
-MindFlow 是一个运行在浏览器端的、本地优先（Local-First）的视觉化思维导图工具。它专为整理图片、视频参考资料和灵感碎片而设计。
+## 🌟 核心特性
 
-✨ 特性
+### 无限画布与物理布局 
+* 自动排布：基于 D3.js 力导向算法，节点自动避让，拖拽手感顺滑且富有生命力。
+* 无限层级：支持创建无限的子节点，自动环绕父节点分布。
+* 自由视图：支持无限平移与缩放，大局与细节尽在掌握。
 
-无限画布与物理布局：基于 D3.js 力导向图，节点自动排布，拖拽手感极佳。
+### 多元化资源管理
 
-本地存储：使用 IndexedDB 技术，支持直接在本地保存大量高清图片，无需上传到云端服务器，保护隐私且速度极快。
+MindFlow 不仅仅是导图，更是一个资源库。支持以下类型：
 
-资源管理：支持上传图片、视频链接、Markdown 笔记，并将它们关联到导图节点上。
+🖼️ 图片 (Image)：直接预览，支持高清大图。
 
-纯静态应用：无后端，无账号系统，即开即用。
+📝 文档 (Markdown)：支持 Markdown 文本记录与预览。
 
-🚀 如何运行
+💻 代码 (Code)：专门的代码块存储，保留格式。
 
-本地运行
+🎨 色卡 (Palette)：设计师必备，直观展示颜色并支持复制 Hex 值。
 
-克隆本仓库或下载代码。
+🎤 音频 (Audio)：支持语音备忘或音效素材。
 
-直接使用浏览器打开 index.html 即可使用。
+🔗 链接 (Link)：快速跳转外部参考网页。
 
-推荐：为了更好的体验（避免部分浏览器的文件协议限制），建议使用 VS Code 的 "Live Server" 插件运行。
+### 文件夹与拖拽归档
 
-部署指南 (Tencent EO Pages)
+层级管理: 支持创建文件夹，通过树状视图管理海量资源。
 
-你可以免费将此应用部署到腾讯云 EdgeOne Pages，实现随时随地访问（数据依然在你的浏览器本地）。
+拖拽交互 (Drag & Drop)
+* 将资源拖入文件夹即可归档。 
+* 将资源拖入空白处即可移回根目录。
 
-将代码推送到 GitHub 仓库。
+### 本地优先与数据安全
 
-登录腾讯云 EdgeOne 控制台，进入 Pages 服务。
+* IndexedDB 存储：所有数据（包括图片文件）均存储在你的浏览器本地数据库中，不上传任何服务器，确数据隐私与安全。
 
-新建项目，连接你的 GitHub 仓库。
+* 导入/导出：支持将整个项目导出为 .mindflow.json 文件，方便备份、迁移或通过云盘同步。
 
-构建配置：
+## 🚀 快速开始
 
-框架预设：选择 "Static" 或 "None"。
+### 在线使用
 
-输出目录：. (根目录)。
+访问部署地址：[MindFlow - 本地化视觉思维导图](https://mind.astroite.com/)
 
-点击部署，绑定你的自定义域名即可。
+### 本地运行
 
-🛠️ 技术栈
+由于使用了 ES Modules 和 IndexedDB，建议通过本地服务器运行：
 
-原生 HTML5 / CSS3
+1. 克隆仓库：
+```
+git clone [https://github.com/your-username/mindflow.git](https://github.com/your-username/mindflow.git)
+```
 
-JavaScript (ES6+)
+2. 使用 VS Code 的 "Live Server" 插件或 Python 启动服务：
 
-D3.js (物理引擎布局)
+``` python
+# Python 3
+python -m http.server 8000
+```
 
-LocalForage (IndexedDB 存储封装)
+3. 浏览器访问 http://localhost:8000。
 
-⚠️ 注意事项
+## 🛠️ 技术栈
 
-数据存储在你的浏览器 IndexedDB 中。如果你清空浏览器缓存或更换设备，数据将会丢失。
+* 核心框架：原生 HTML5 / CSS3 / JavaScript (ES6+)
 
-建议定期使用浏览器自带的“开发者工具”导出数据（后续版本将增加一键导出功能）。
+* 可视化引擎：D3.js (v7)
+
+* 本地存储：LocalForage (IndexedDB Wrapper)
+
+## 📄 许可证
+
+MIT License
