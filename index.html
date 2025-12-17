@@ -15,6 +15,9 @@
 </head>
 <body>
 
+<!-- 隐藏的文件输入框，用于导入文件 -->
+<input type="file" id="importInput" style="display: none;" accept=".json,.mindflow">
+
 <div class="app-container">
     <!-- 左侧边栏 -->
     <div class="sidebar closed" id="sidebar">
@@ -24,7 +27,12 @@
                 <select id="projSelect" class="project-select">
                     <option value="" disabled selected>正在加载...</option>
                 </select>
-                <button class="btn-icon" title="删除当前项目" onclick="app.ui.confirmDeleteProject()">🗑️</button>
+                <!-- [修改] 增加导入导出按钮 -->
+                <div class="btn-group-mini">
+                    <button class="btn-icon" title="导出到本地磁盘" onclick="app.data.exportProjectToFile()">💾</button>
+                    <button class="btn-icon" title="从磁盘打开项目" onclick="app.ui.triggerImport()">📂</button>
+                    <button class="btn-icon danger" title="删除当前项目" onclick="app.ui.confirmDeleteProject()">🗑️</button>
+                </div>
             </div>
         </div>
 
@@ -44,7 +52,6 @@
         <div class="toolbar">
             <button class="tool-btn" onclick="app.ui.toggleSidebar()" title="切换侧边栏">☰</button>
 
-            <!-- [新增] 项目名称编辑框 -->
             <input type="text" id="projTitleInput" class="project-title-input"
                    placeholder="未命名项目"
                    onchange="app.data.renameProject(this.value)"
@@ -55,7 +62,7 @@
             <button class="tool-btn" onclick="app.graph.resetCamera()">🔎 归位</button>
             <div class="spacer"></div>
             <div id="saveStatus" class="status-text">就绪</div>
-            <button class="tool-btn" onclick="app.storage.forceSave()">💾 保存</button>
+            <button class="tool-btn" onclick="app.storage.forceSave()" title="保存到浏览器数据库">☁️ 保存</button>
             <button class="tool-btn danger" onclick="app.graph.clearAll()">🗑️ 清空</button>
         </div>
 
@@ -71,24 +78,31 @@
         <h3>添加资源</h3>
         <div class="form-group">
             <label>类型</label>
+            <!-- [修改] 更新后的资源类型列表 -->
             <select id="resType" class="form-input" onchange="app.ui.toggleResInput()">
-                <option value="image">🖼️ 图片</option>
-                <option value="video">🎬 视频</option>
-                <option value="link">🔗 链接/文本</option>
+                <option value="image">🖼️ 图片 (Image)</option>
+                <option value="md">📝 文档 (Markdown/Text)</option>
+                <option value="link">🔗 链接 (Link)</option>
             </select>
         </div>
         <div class="form-group">
             <label>名称</label>
             <input type="text" id="resName" class="form-input" placeholder="输入资源名称">
         </div>
+
+        <!-- 文件上传区：支持图片和文本文件 -->
         <div class="form-group" id="groupFile">
-            <label>文件 (支持大图，存储于本地)</label>
+            <label>选择文件</label>
             <input type="file" id="resFile" class="form-input" accept="image/*">
+            <small style="color:#666; font-size:12px;">图片会直接保存到本地数据库，建议压缩后上传。</small>
         </div>
+
+        <!-- 链接输入区 -->
         <div class="form-group" id="groupLink" style="display: none;">
-            <label>内容</label>
-            <input type="text" id="resContent" class="form-input" placeholder="https://...">
+            <label>链接地址</label>
+            <input type="text" id="resContent" class="form-input" placeholder="https://example.com">
         </div>
+
         <div class="modal-actions">
             <button class="btn-text" onclick="app.ui.closeModal('resModal')">取消</button>
             <button class="btn-primary" onclick="app.data.addResource()">确认添加</button>
