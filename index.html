@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>MindFlow - 本地化视觉思维导图</title>
     <meta name="description" content="一个基于浏览器的本地优先思维导图工具，支持图片与无限画布。">
 
@@ -19,12 +19,15 @@
 
 <div class="app-container">
     <!-- 左侧边栏 -->
-    <div class="sidebar" id="sidebar">
+    <div class="sidebar closed" id="sidebar"> <!-- 默认移动端收起，桌面端视 CSS 而定，这里建议 JS 初始化决定，或者去掉 closed -->
         <div class="sidebar-header">
             <div class="brand">MindFlow</div>
-            <select id="projSelect" class="project-select">
-                <option value="" disabled selected>正在加载...</option>
-            </select>
+            <div class="project-control">
+                <select id="projSelect" class="project-select">
+                    <option value="" disabled selected>正在加载...</option>
+                </select>
+                <button class="btn-icon" title="删除当前项目" onclick="app.ui.confirmDeleteProject()">🗑️</button>
+            </div>
         </div>
 
         <div class="sidebar-content">
@@ -44,7 +47,7 @@
         <div class="toolbar">
             <button class="tool-btn" onclick="app.ui.toggleSidebar()" title="切换侧边栏">☰</button>
             <div class="divider"></div>
-            <button class="tool-btn primary" onclick="app.graph.addRootNode()">🎯 创建根节点</button>
+            <button class="tool-btn primary" onclick="app.graph.addRootNode()">🎯 根节点</button>
             <button class="tool-btn" onclick="app.graph.resetCamera()">🔎 归位</button>
             <div class="spacer"></div>
             <div id="saveStatus" class="status-text">就绪</div>
@@ -115,5 +118,13 @@
 
 <!-- 应用逻辑 -->
 <script src="js/app.js"></script>
+<script>
+    // 初始化时根据屏幕宽度决定是否收起侧边栏
+    if (window.innerWidth < 768) {
+        document.getElementById('sidebar').classList.add('closed');
+    } else {
+        document.getElementById('sidebar').classList.remove('closed');
+    }
+</script>
 </body>
 </html>

@@ -19,7 +19,7 @@ body {
 }
 
 /* 布局 */
-.app-container { display: flex; height: 100vh; width: 100vw; }
+.app-container { display: flex; height: 100vh; width: 100vw; position: relative; }
 
 /* 侧边栏 */
 .sidebar {
@@ -31,9 +31,15 @@ body {
     z-index: 20;
     box-shadow: 2px 0 10px rgba(0,0,0,0.03);
     transition: transform 0.3s ease;
+    flex-shrink: 0; /* 防止被压缩 */
 }
 
-.sidebar.closed { transform: translateX(-100%); position: absolute; height: 100%; }
+/* 侧边栏收起状态 */
+.sidebar.closed {
+    transform: translateX(-100%);
+    position: absolute; /* 绝对定位，脱离文档流，让主区域自然扩张 */
+    height: 100%;
+}
 
 .sidebar-header {
     padding: 20px;
@@ -41,13 +47,26 @@ body {
     color: white;
 }
 
-.brand { font-size: 1.2rem; font-weight: bold; margin-bottom: 10px; }
+.brand { font-size: 1.2rem; font-weight: bold; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;}
+
+/* 项目选择器行 */
+.project-control {
+    display: flex;
+    gap: 5px;
+}
 
 .project-select {
-    width: 100%; padding: 8px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.2);
+    flex: 1; padding: 8px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.2);
     background: rgba(255,255,255,0.1); color: white; font-size: 0.9rem; cursor: pointer;
 }
 .project-select option { background: #333; color: white; }
+
+.btn-icon {
+    background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);
+    color: white; border-radius: 4px; width: 35px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+}
+.btn-icon:hover { background: rgba(255,255,255,0.2); color: #ffcccc; }
 
 .sidebar-content { flex: 1; overflow-y: auto; padding: 15px; }
 
@@ -66,22 +85,24 @@ body {
 .empty-tip { text-align: center; color: #94a3b8; font-size: 0.9rem; margin-top: 20px; }
 
 /* 主区域 */
-.main-area { flex: 1; display: flex; flex-direction: column; position: relative; }
+.main-area { flex: 1; display: flex; flex-direction: column; position: relative; overflow: hidden; }
 
 .toolbar {
-    height: 50px; background: white; border-bottom: 1px solid var(--border-color);
-    display: flex; align-items: center; padding: 0 15px; gap: 10px;
+    min-height: 50px; background: white; border-bottom: 1px solid var(--border-color);
+    display: flex; align-items: center; padding: 5px 15px; gap: 10px;
     z-index: 10;
+    flex-wrap: wrap; /* 允许按钮换行 */
 }
 
 .divider { width: 1px; height: 20px; background: var(--border-color); margin: 0 5px; }
 .spacer { flex: 1; }
-.status-text { font-size: 0.8rem; color: #94a3b8; margin-right: 10px; }
+.status-text { font-size: 0.8rem; color: #94a3b8; margin-right: 10px; white-space: nowrap; }
 
 /* 按钮 */
 .tool-btn {
     padding: 6px 12px; border: 1px solid var(--border-color); background: white;
     border-radius: 4px; cursor: pointer; font-size: 0.9rem; transition: background 0.2s;
+    white-space: nowrap; /* 防止按钮内文字换行 */
 }
 .tool-btn:hover { background: #f1f5f9; }
 .tool-btn.primary { background: var(--primary); color: white; border-color: var(--primary); }
@@ -104,7 +125,7 @@ body {
     background-size: 20px 20px;
     background-color: #f8fafc;
 }
-canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; /* 禁止浏览器默认触摸行为 */ }
 canvas:active { cursor: grabbing; }
 
 /* 弹窗 */
@@ -139,3 +160,41 @@ canvas:active { cursor: grabbing; }
     transition: opacity 0.3s; z-index: 200;
 }
 .toast.show { opacity: 1; }
+
+/* --- 移动端响应式适配 --- */
+@media (max-width: 768px) {
+    .sidebar {
+        position: absolute;
+        width: 100%; /* 全屏侧边栏 */
+        height: 100%;
+        transform: translateX(-100%);
+        transition: transform 0.3s ease;
+    }
+
+    .sidebar.closed {
+        transform: translateX(-100%);
+    }
+
+    /* 当侧边栏打开时，覆盖在主区域之上 */
+    .sidebar:not(.closed) {
+        transform: translateX(0);
+    }
+
+    .toolbar {
+        padding: 10px;
+        gap: 8px;
+    }
+
+    .status-text { display: none; /* 手机上隐藏状态文字 */ }
+
+    .tool-btn {
+        flex: 1; /* 按钮平均分布 */
+        padding: 8px 5px;
+        font-size: 0.8rem;
+        display: flex;
+        justify-content: center;
+    }
+
+    /* 隐藏不重要的按钮或调整布局 */
+    .spacer { display: none; }
+}

@@ -1,6 +1,6 @@
 /**
  * MindFlow - App Logic
- * 包含：存储管理 (IndexedDB), D3 物理引擎, UI 交互
+ * 更新内容：项目删除功能、ResizeObserver 自适应画布、移动端交互优化
  */
 
 const app = {
@@ -18,7 +18,7 @@ const app = {
     // --- 全局状态 ---
     state: {
         currentId: null,
-        projectsIndex: [], // 简单的项目列表索引 {id, name}
+        projectsIndex: [],
         nodes: [],
         links: [],
         resources: [],
@@ -26,14 +26,12 @@ const app = {
         isSimulating: false,
         selectedNode: null,
         tempFileBase64: null,
-        // D3 Simulation 实例
         simulation: null
     },
 
     // --- 模块 1: 存储 (Storage) ---
     storage: {
         init: async function() {
-            // 初始化 localforage
             localforage.config({
                 name: app.config.dbName,
                 storeName: app.config.storeName
@@ -66,56 +64,83 @@ const app = {
                 resources: []
             };
 
-            // 保存项目数据
             await localforage.setItem(id, newProj);
-
-            // 更新索引
             app.state.projectsIndex.push({ id: id, name: name });
             await this.saveIndex();
-
             return id;
+        },
+
+        // [新增] 删除项目
+        deleteProject: async function(id) {
+            if (!id) return;
+            try {
+                // 1. 从 IndexedDB 删除项目数据
+                await localforage.removeItem(id);
+
+                // 2. 更新索引
+                app.state.projectsIndex = app.state.projectsIndex.filter(p => p.id !== id);
+                await this.saveIndex();
+
+                app.ui.toast('项目已删除');
+
+                // 3. UI 状态处理
+                if (app.state.currentId === id) {
+                    app.state.currentId = null;
+                    app.state.nodes = [];
+                    app.state.links = [];
+                    app.state.resources = [];
+                    app.graph.updateSimulation();
+                    app.ui.renderResourceList();
+                    document.getElementById('saveStatus').innerText = '已就绪';
+                }
+
+                // 4. 刷新下拉框
+                app.ui.updateProjectSelect();
+
+            } catch (e) {
+                console.error(e);
+                app.ui.toast('删除失败: ' + e.message);
+            }
         },
 
         loadProject: async function(id) {
             try {
                 const proj = await localforage.getItem(id);
-                if (!proj) throw new Error('项目不存在');
+                if (!proj) throw new Error('项目不存在或已被删除');
 
                 app.state.currentId = id;
-                // 深拷贝数据到运行时状态
-                app.state.nodes = JSON.parse(JSON.stringify(proj.nodes));
-                app.state.links = JSON.parse(JSON.stringify(proj.links));
-                app.state.resources = JSON.parse(JSON.stringify(proj.resources));
+                app.state.nodes = JSON.parse(JSON.stringify(proj.nodes || []));
+                app.state.links = JSON.parse(JSON.stringify(proj.links || []));
+                app.state.resources = JSON.parse(JSON.stringify(proj.resources || []));
 
-                // 重置视图
                 app.graph.resetCamera();
                 app.graph.imageCache.clear();
-
-                // UI 更新
                 app.ui.renderResourceList();
                 app.ui.toast(`已加载: ${proj.name}`);
-
-                // 启动物理引擎
                 app.graph.updateSimulation();
 
-                // 更新状态显示
                 document.getElementById('saveStatus').innerText = '已加载';
 
             } catch (e) {
                 app.ui.toast('加载失败: ' + e.message);
+                // 如果加载失败（可能索引还在但数据没了），尝试清理索引
+                if (e.message.includes('不存在')) {
+                    // 可选：自动清理无效索引
+                }
             }
         },
 
         forceSave: async function() {
-            if (!app.state.currentId) return;
+            if (!app.state.currentId) return app.ui.toast('请先创建或选择项目');
 
             document.getElementById('saveStatus').innerText = '保存中...';
 
+            const currentProjName = app.state.projectsIndex.find(p => p.id === app.state.currentId)?.name || '未命名项目';
+
             const projData = {
                 id: app.state.currentId,
-                name: app.state.projectsIndex.find(p => p.id === app.state.currentId).name,
+                name: currentProjName,
                 updated: Date.now(),
-                // 保存节点的核心属性，去除 D3 附加的属性 (index, vx, vy 等)
                 nodes: app.state.nodes.map(n => ({
                     id: n.id, type: n.type, x: n.x, y: n.y, label: n.label, resId: n.resId
                 })),
@@ -133,7 +158,6 @@ const app = {
             } catch (e) {
                 console.error(e);
                 app.ui.toast('保存失败 (可能图片过大)');
-                document.getElementById('saveStatus').innerText = '保存失败';
             }
         }
     },
@@ -153,32 +177,40 @@ const app = {
             this.canvas = document.getElementById('mainCanvas');
             this.ctx = this.canvas.getContext('2d');
 
-            // 响应式画布
-            this.resize();
-            window.addEventListener('resize', () => this.resize());
+            // [优化] 使用 ResizeObserver 监听容器大小变化
+            // 这能完美解决侧边栏收起/展开导致画布拉伸的问题
+            const resizeObserver = new ResizeObserver(() => {
+                this.resize();
+            });
+            resizeObserver.observe(document.getElementById('canvasWrapper'));
 
-            // 初始化 D3 仿真器
             app.state.simulation = d3.forceSimulation()
                 .force("link", d3.forceLink().id(d => d.id).distance(app.config.linkDistance))
                 .force("charge", d3.forceManyBody().strength(app.config.chargeStrength))
                 .force("collide", d3.forceCollide().radius(app.config.collideRadius))
                 .force("center", d3.forceCenter(0, 0).strength(0.02))
-                .on("tick", () => { /* D3 计算坐标，渲染在 renderLoop */ });
+                .on("tick", () => { /* Render logic is in renderLoop */ });
 
-            // 绑定交互事件
             this.bindEvents();
-
-            // 启动渲染循环
             requestAnimationFrame(() => this.renderLoop());
         },
 
         resize: function() {
             const wrapper = document.getElementById('canvasWrapper');
+            // 获取容器的真实像素尺寸
             this.width = wrapper.clientWidth;
             this.height = wrapper.clientHeight;
+
+            // 调整 Canvas 分辨率以匹配显示尺寸（防止模糊或拉伸）
             this.canvas.width = this.width;
             this.canvas.height = this.height;
-            if(!app.state.currentId) this.resetCamera();
+
+            // 如果是首次初始化，居中相机
+            if (!app.state.currentId && app.state.nodes.length === 0) {
+                this.resetCamera();
+            }
+            // 触发一次渲染
+            app.state.simulation.alpha(0.1).restart();
         },
 
         resetCamera: function() {
@@ -226,7 +258,6 @@ const app = {
             }
         },
 
-        // 渲染循环
         renderLoop: function() {
             const ctx = this.ctx;
             const cam = app.state.camera;
@@ -236,35 +267,35 @@ const app = {
             ctx.translate(cam.x, cam.y);
             ctx.scale(cam.k, cam.k);
 
-            // 1. 绘制连线
+            // Draw Links
             ctx.beginPath();
             ctx.strokeStyle = '#cbd5e1';
             ctx.lineWidth = 2;
             app.state.links.forEach(l => {
                 const s = l.source, t = l.target;
-                if (s.x && t.x) { // 确保坐标存在
+                if (s.x && t.x) {
                     ctx.moveTo(s.x, s.y);
                     ctx.lineTo(t.x, t.y);
                 }
             });
             ctx.stroke();
 
-            // 2. 绘制节点
+            // Draw Nodes
             app.state.nodes.forEach(n => {
                 const r = n.type === 'root' ? app.config.nodeRadius : app.config.subRadius;
 
-                // 阴影
+                // Shadow
                 ctx.shadowColor = 'rgba(0,0,0,0.1)';
                 ctx.shadowBlur = 10;
 
-                // 圆形背景
+                // Background
                 ctx.beginPath();
                 ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
                 ctx.fillStyle = 'white';
                 ctx.fill();
                 ctx.shadowBlur = 0;
 
-                // 图片资源
+                // Image/Icon
                 let hasImg = false;
                 if (n.resId) {
                     const res = app.state.resources.find(r => r.id === n.resId);
@@ -272,7 +303,6 @@ const app = {
                         this.drawImageInNode(n, res, r);
                         hasImg = true;
                     } else if (res) {
-                        // 绘制图标
                         ctx.font = '24px Arial';
                         ctx.textAlign = 'center';
                         ctx.textBaseline = 'middle';
@@ -280,28 +310,26 @@ const app = {
                     }
                 }
 
-                // 边框 (选中时变红)
+                // Border
                 ctx.beginPath();
                 ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
                 ctx.lineWidth = 3;
                 ctx.strokeStyle = (app.state.selectedNode === n) ? '#e74c3c' : (n.type === 'root' ? '#2c3e50' : '#667eea');
                 ctx.stroke();
 
-                // 标签文字
+                // Label
                 ctx.fillStyle = '#334155';
                 ctx.font = 'bold 12px Arial';
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
                 const textY = hasImg ? n.y + r + 15 : (n.resId && !hasImg ? n.y + r + 15 : n.y);
                 if (!hasImg && !n.resId) {
-                    // 纯文字居中
                     ctx.fillText(n.label, n.x, n.y);
                 } else {
-                    // 图片下方文字
                     ctx.fillText(n.label, n.x, textY);
                 }
 
-                // 右下角加号 (小绿点)
+                // Add Button (Green Dot)
                 const btnX = n.x + r * 0.707;
                 const btnY = n.y + r * 0.707;
                 ctx.beginPath();
@@ -332,7 +360,6 @@ const app = {
                 ctx.beginPath();
                 ctx.arc(node.x, node.y, r - 2, 0, Math.PI * 2);
                 ctx.clip();
-                // 保持比例覆盖
                 const scale = Math.max((r*2)/img.width, (r*2)/img.height);
                 const w = img.width * scale;
                 const h = img.height * scale;
@@ -341,30 +368,33 @@ const app = {
             }
         },
 
-        // 交互事件处理
         bindEvents: function() {
             const canvas = this.canvas;
 
-            // 坐标转换工具
+            // 支持触摸和鼠标的坐标获取
             const getPos = (e) => {
                 const rect = canvas.getBoundingClientRect();
                 const k = app.state.camera.k;
+                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                const clientY = e.touches ? e.touches[0].clientY : e.clientY;
                 return {
-                    x: (e.clientX - rect.left - app.state.camera.x) / k,
-                    y: (e.clientY - rect.top - app.state.camera.y) / k
+                    x: (clientX - rect.left - app.state.camera.x) / k,
+                    y: (clientY - rect.top - app.state.camera.y) / k
                 };
             };
 
-            canvas.addEventListener('mousedown', (e) => {
+            // 统一处理 Start 事件 (MouseDown / TouchStart)
+            const handleStart = (e) => {
+                if (e.target !== canvas) return;
+                // e.preventDefault(); // 注意：可能需要阻止默认行为以防止滚动
+
                 const m = getPos(e);
                 let hitNode = null;
 
-                // 倒序检测（优先选中上层）
                 for (let i = app.state.nodes.length - 1; i >= 0; i--) {
                     const n = app.state.nodes[i];
                     const r = n.type === 'root' ? app.config.nodeRadius : app.config.subRadius;
 
-                    // 1. 检测加号点击
                     const btnX = n.x + r * 0.707;
                     const btnY = n.y + r * 0.707;
                     if (Math.hypot(m.x - btnX, m.y - btnY) < 15) {
@@ -372,7 +402,6 @@ const app = {
                         return;
                     }
 
-                    // 2. 检测节点点击
                     if (Math.hypot(m.x - n.x, m.y - n.y) < r) {
                         hitNode = n;
                         break;
@@ -381,31 +410,39 @@ const app = {
 
                 if (hitNode) {
                     this.dragSubject = hitNode;
-                    // D3 拖拽固定
                     hitNode.fx = hitNode.x;
                     hitNode.fy = hitNode.y;
                     app.state.simulation.alphaTarget(0.3).restart();
                     app.state.selectedNode = hitNode;
                 } else {
                     this.isPanning = true;
-                    this.startPan = { x: e.clientX, y: e.clientY };
+                    // 兼容触摸和鼠标
+                    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+                    this.startPan = { x: clientX, y: clientY };
                     app.state.selectedNode = null;
                 }
-            });
+            };
 
-            canvas.addEventListener('mousemove', (e) => {
+            const handleMove = (e) => {
+                if (!this.dragSubject && !this.isPanning) return;
+                e.preventDefault();
+
+                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
                 if (this.dragSubject) {
                     const m = getPos(e);
                     this.dragSubject.fx = m.x;
                     this.dragSubject.fy = m.y;
                 } else if (this.isPanning) {
-                    app.state.camera.x += e.clientX - this.startPan.x;
-                    app.state.camera.y += e.clientY - this.startPan.y;
-                    this.startPan = { x: e.clientX, y: e.clientY };
+                    app.state.camera.x += clientX - this.startPan.x;
+                    app.state.camera.y += clientY - this.startPan.y;
+                    this.startPan = { x: clientX, y: clientY };
                 }
-            });
+            };
 
-            canvas.addEventListener('mouseup', () => {
+            const handleEnd = () => {
                 if (this.dragSubject) {
                     this.dragSubject.fx = null;
                     this.dragSubject.fy = null;
@@ -413,14 +450,26 @@ const app = {
                     this.dragSubject = null;
                 }
                 this.isPanning = false;
-            });
+            };
 
+            // 鼠标事件
+            canvas.addEventListener('mousedown', handleStart);
+            canvas.addEventListener('mousemove', handleMove);
+            window.addEventListener('mouseup', handleEnd);
+
+            // 触摸事件 (移动端支持)
+            canvas.addEventListener('touchstart', handleStart, {passive: false});
+            canvas.addEventListener('touchmove', handleMove, {passive: false});
+            window.addEventListener('touchend', handleEnd);
+
+            // 滚轮缩放
             canvas.addEventListener('wheel', (e) => {
                 e.preventDefault();
                 const factor = e.deltaY < 0 ? 1.1 : 0.9;
                 app.state.camera.k = Math.max(0.1, Math.min(5, app.state.camera.k * factor));
             });
 
+            // 双击
             canvas.addEventListener('dblclick', (e) => {
                 const m = getPos(e);
                 const hitNode = app.state.nodes.find(n => {
@@ -461,13 +510,12 @@ const app = {
             app.ui.closeModal('resModal');
             app.storage.forceSave();
 
-            // 清理
             app.state.tempFileBase64 = null;
             document.getElementById('resFile').value = '';
         },
 
         saveNodeEdit: function() {
-            const node = app.state.selectedNode; // 此时 selectedNode 应该是被双击的那个
+            const node = app.state.selectedNode;
             if (node) {
                 node.label = document.getElementById('nodeLabel').value;
                 node.resId = document.getElementById('nodeResSelect').value || null;
@@ -480,7 +528,6 @@ const app = {
             const node = app.state.selectedNode;
             if (!node) return;
 
-            // 简单级联删除
             let toDel = new Set([node.id]);
             let changed = true;
             while(changed) {
@@ -509,7 +556,6 @@ const app = {
     // --- 模块 4: UI 交互 (UI) ---
     ui: {
         init: function() {
-            // 项目选择器事件
             document.getElementById('projSelect').addEventListener('change', async (e) => {
                 const val = e.target.value;
                 if (val === '__new__') {
@@ -525,7 +571,6 @@ const app = {
                 }
             });
 
-            // 文件读取预览
             document.getElementById('resFile').addEventListener('change', (e) => {
                 const f = e.target.files[0];
                 if (f) {
@@ -534,6 +579,14 @@ const app = {
                     reader.readAsDataURL(f);
                 }
             });
+        },
+
+        // [新增] 确认并删除项目
+        confirmDeleteProject: function() {
+            if (!app.state.currentId) return;
+            if (confirm('确定要永久删除当前项目吗？此操作无法撤销。')) {
+                app.storage.deleteProject(app.state.currentId);
+            }
         },
 
         updateProjectSelect: function() {
@@ -574,7 +627,6 @@ const app = {
             const res = app.state.resources.find(r => r.id === id);
             if (!res) return;
 
-            // 如果是图片，定位到关联节点；如果没关联，就预览
             const linkedNode = app.state.nodes.find(n => n.resId === id);
             if (linkedNode) {
                 app.state.camera.x = app.graph.width/2 - linkedNode.x * app.state.camera.k;
@@ -603,7 +655,7 @@ const app = {
 
         openNodeMenu: function(node, x, y) {
             const menu = document.getElementById('nodeMenu');
-            app.state.selectedNode = node; // 标记当前编辑节点
+            app.state.selectedNode = node;
 
             document.getElementById('nodeLabel').value = node.label;
 
@@ -619,6 +671,7 @@ const app = {
         },
 
         toggleSidebar: function() {
+            // CSS 会处理动画，app.graph.init 里的 ResizeObserver 会处理画布重绘
             document.getElementById('sidebar').classList.toggle('closed');
         },
 
@@ -645,5 +698,4 @@ const app = {
     }
 };
 
-// 页面加载完成后启动
 window.onload = () => app.init();
