@@ -1,12 +1,12 @@
 /**
  * MindFlow - App Logic
- * 更新内容：资源目录层级管理 (Folders)
+ * 更新内容：支持资源拖拽 (Drag & Drop) 管理，实现文件归档与移动
  */
 
 const app = {
     // --- 配置 ---
     config: {
-        appVersion: '1.3.0',
+        appVersion: '1.4.0',
         nodeRadius: 40, subRadius: 30, linkDistance: 150, chargeStrength: -800, collideRadius: 55,
         dbName: 'MindFlowDB', storeName: 'projects', previewDelay: 300
     },
@@ -19,8 +19,8 @@ const app = {
         camera: { x: 0, y: 0, k: 1 },
         simulation: null, selectedNode: null, tempFileBase64: null, hoverNode: null, tooltipTimer: null,
         editingResId: null,
-        // [新增] 记录展开的文件夹ID
-        expandedFolders: new Set()
+        expandedFolders: new Set(),
+        draggedResId: null // [新增] 记录当前拖拽的资源ID
     },
 
     // --- 模块 1: 存储 (Storage) ---
@@ -91,12 +91,11 @@ const app = {
                 app.state.currentId = id;
                 app.state.nodes = JSON.parse(JSON.stringify(proj.nodes || []));
                 app.state.links = JSON.parse(JSON.stringify(proj.links || []));
-                // 兼容旧数据：为没有parentId的资源添加 parentId: null
                 app.state.resources = (proj.resources || []).map(r => ({ ...r, parentId: r.parentId || null }));
 
                 document.getElementById('projTitleInput').value = proj.name;
                 app.graph.resetCamera(); app.graph.imageCache.clear();
-                app.ui.renderResourceTree(); // [修改] 改为渲染树
+                app.ui.renderResourceTree();
                 app.ui.toast(`已加载: ${proj.name}`);
                 app.graph.updateSimulation();
                 document.getElementById('saveStatus').innerText = '已加载';
@@ -390,19 +389,31 @@ const app = {
             if(n.trim()) app.storage.renameProject(app.state.currentId, n.trim());
         },
 
-        // [新增] 创建文件夹
         createFolder: function() {
             if(!app.state.currentId) return app.ui.toast('请先创建项目');
             const name = prompt('文件夹名称:');
             if(!name) return;
-
-            const folder = {
-                id: 'folder_' + Date.now(),
-                type: 'folder',
-                name: name,
-                parentId: null // 暂不支持子文件夹的子文件夹，简化交互
-            };
+            const folder = { id: 'folder_' + Date.now(), type: 'folder', name: name, parentId: null };
             app.state.resources.push(folder);
+            app.ui.renderResourceTree();
+            app.storage.forceSave();
+        },
+
+        // [新增] 移动资源逻辑
+        moveResource: function(resId, parentId) {
+            const res = app.state.resources.find(r => r.id === resId);
+            // 限制：只能移动文件，不能移动文件夹 (保持结构简单)
+            // 且防止自己移动到自己里 (虽然文件没子集，但以防万一)
+            if (!res || res.type === 'folder' || res.id === parentId) {
+                if (res && res.type === 'folder') app.ui.toast('暂不支持移动文件夹');
+                return;
+            }
+
+            res.parentId = parentId; // parentId 为 null 代表根目录，为 folderId 代表文件夹
+
+            // 如果移入文件夹，展开该文件夹以便用户确认
+            if (parentId) app.state.expandedFolders.add(parentId);
+
             app.ui.renderResourceTree();
             app.storage.forceSave();
         },
@@ -410,7 +421,7 @@ const app = {
         saveResource: function() {
             const type = document.getElementById('resType').value;
             const name = document.getElementById('resName').value;
-            const parentId = document.getElementById('resParentId').value || null; // 获取选择的文件夹
+            const parentId = document.getElementById('resParentId').value || null;
 
             if (!name) return app.ui.toast('请输入名称');
 
@@ -431,13 +442,13 @@ const app = {
             if (app.state.editingResId) {
                 const res = app.state.resources.find(r => r.id === app.state.editingResId);
                 if (res) {
-                    res.name = name; res.type = type; res.content = content; res.parentId = parentId; // 更新父目录
+                    res.name = name; res.type = type; res.content = content; res.parentId = parentId;
                     app.ui.toast('资源已更新');
                 }
             } else {
                 const newRes = {
                     id: 'res_' + Date.now(),
-                    type: type, name: name, content: content, parentId: parentId // 保存父目录ID
+                    type: type, name: name, content: content, parentId: parentId
                 };
                 app.state.resources.push(newRes);
                 app.ui.toast('资源已添加');
@@ -459,18 +470,13 @@ const app = {
 
         deleteResource: function(id) {
             if (!confirm('确定删除？')) return;
-
-            // 如果是文件夹，连带删除子文件
             const res = app.state.resources.find(r => r.id === id);
             if (res && res.type === 'folder') {
                 app.state.resources = app.state.resources.filter(r => r.parentId !== id && r.id !== id);
             } else {
                 app.state.resources = app.state.resources.filter(r => r.id !== id);
             }
-
-            // 清理节点引用
             app.state.nodes.forEach(n => { if (n.resId === id) n.resId = null; });
-
             app.ui.renderResourceTree();
             app.storage.forceSave();
             app.ui.toast('已删除');
@@ -519,7 +525,6 @@ const app = {
                 maxWidth: '300px', maxHeight: '300px', overflow: 'hidden', pointerEvents: 'auto'
             });
             document.body.appendChild(this.tooltipEl);
-
             this.tooltipEl.addEventListener('mouseenter', () => clearTimeout(app.state.tooltipTimer));
             this.tooltipEl.addEventListener('mouseleave', () => this.hideTooltip());
 
@@ -548,6 +553,51 @@ const app = {
                 if(e.target.files[0]) { app.data.importProjectFromFile(e.target.files[0]); e.target.value=''; }
             });
         },
+
+        // --- Drag & Drop 事件处理器 ---
+        dragStart: function(e, id) {
+            e.dataTransfer.setData('text/plain', id);
+            e.dataTransfer.effectAllowed = 'move';
+            app.state.draggedResId = id;
+            e.target.classList.add('dragging'); // 视觉反馈
+        },
+
+        dragOver: function(e, parentId) {
+            e.preventDefault(); // 允许 Drop
+            e.stopPropagation();
+
+            // 高亮目标文件夹
+            const target = e.currentTarget;
+            if (!target.classList.contains('drag-over')) {
+                // 清除其他高亮
+                document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+                target.classList.add('drag-over');
+            }
+            e.dataTransfer.dropEffect = 'move';
+        },
+
+        dragLeave: function(e) {
+            // 这里为了防止闪烁，简单的移除可能不太够，最好配合 dragEnter 计数
+            // 但对于简单的列表，直接移除通常可行，或者依赖 dragOver 重新添加
+            e.currentTarget.classList.remove('drag-over');
+        },
+
+        drop: function(e, parentId) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.currentTarget.classList.remove('drag-over');
+
+            const resId = e.dataTransfer.getData('text/plain');
+            if (resId) {
+                app.data.moveResource(resId, parentId);
+            }
+
+            // 清理拖拽源样式
+            const dragged = document.querySelector('.dragging');
+            if(dragged) dragged.classList.remove('dragging');
+            app.state.draggedResId = null;
+        },
+        // -----------------------------
 
         showTooltip: function(node, x, y) {
             clearTimeout(app.state.tooltipTimer);
@@ -592,27 +642,38 @@ const app = {
             sel.innerHTML = h;
         },
 
-        // [重要更新] 渲染树形资源列表
         renderResourceTree: function() {
+            // Root container acts as Drop Zone for Root Level (parentId = null)
             const container = document.getElementById('resList');
+            // Bind drop events to the container for "Drop to Root"
+            // We use 'null' string to represent null parent logic if passed to simple HTML attribute,
+            // but here we pass actual null in JS binding or handle string 'null'
+            // For simplicity, we can do inline: onclick="app.ui.drop(event, null)"
+            // But beware of bubbling from children. The children stopPropagation, so this only triggers on empty space.
+            container.ondragover = (e) => app.ui.dragOver(e, null);
+            container.ondrop = (e) => app.ui.drop(e, null);
+            container.ondragleave = (e) => app.ui.dragLeave(e);
+
             const resources = app.state.resources;
 
-            if(!resources.length) { container.innerHTML = '<div class="empty-tip">暂无资源</div>'; return; }
+            if(!resources.length) { container.innerHTML = '<div class="empty-tip">暂无资源<br><small>拖入文件或点击添加</small></div>'; return; }
 
-            // 1. 分离文件夹和文件
             const folders = resources.filter(r => r.type === 'folder');
             const rootFiles = resources.filter(r => !r.parentId && r.type !== 'folder');
 
-            // 2. 生成 HTML
             let html = '';
 
-            // 2.1 渲染文件夹及其子内容
             folders.forEach(folder => {
                 const isOpen = app.state.expandedFolders.has(folder.id);
-                const children = resources.filter(r => r.parentId === folder.id && r.type !== 'folder'); // 暂只支持一层文件夹
+                const children = resources.filter(r => r.parentId === folder.id && r.type !== 'folder');
 
+                // 文件夹作为 Drop Target
                 html += `
-                    <div class="res-folder ${isOpen?'open':''}" onclick="app.ui.toggleFolder('${folder.id}')">
+                    <div class="res-folder ${isOpen?'open':''}" 
+                         onclick="app.ui.toggleFolder('${folder.id}')"
+                         ondragover="app.ui.dragOver(event, '${folder.id}')"
+                         ondrop="app.ui.drop(event, '${folder.id}')"
+                         ondragleave="app.ui.dragLeave(event)">
                         <div class="folder-icon">▶</div>
                         <div class="res-info"><div class="res-name">${folder.name}</div></div>
                         <div class="res-actions">
@@ -625,7 +686,6 @@ const app = {
                 `;
             });
 
-            // 2.2 渲染根目录下的文件
             rootFiles.forEach(file => {
                 html += this.createResItemHtml(file);
             });
@@ -637,8 +697,11 @@ const app = {
             let icon = '🔗';
             if(r.type==='image') icon='🖼️'; else if(r.type==='md') icon='📝'; else if(r.type==='code') icon='💻'; else if(r.type==='color') icon='🎨'; else if(r.type==='audio') icon='🎤';
 
+            // 文件作为 Drag Source (draggable="true")
             return `
-                <div class="res-item">
+                <div class="res-item" 
+                     draggable="true"
+                     ondragstart="app.ui.dragStart(event, '${r.id}')">
                     <div class="res-icon" onclick="app.ui.viewResource('${r.id}')">${icon}</div>
                     <div class="res-info" onclick="app.ui.viewResource('${r.id}')">
                         <div class="res-name">${r.name}</div>
@@ -680,12 +743,10 @@ const app = {
             const parentSel = document.getElementById('resParentId');
             const nameInput = document.getElementById('resName');
 
-            // 填充文件夹选项
             const folders = app.state.resources.filter(r => r.type === 'folder');
             parentSel.innerHTML = '<option value="">(根目录)</option>' +
                 folders.map(f => `<option value="${f.id}">📁 ${f.name}</option>`).join('');
 
-            // 重置表单
             app.state.tempFileBase64 = null;
             document.getElementById('resFile').value = ''; document.getElementById('resTextInput').value = '';
             document.getElementById('resTextArea').value = ''; document.getElementById('resColorInput').value = '#000000';
@@ -695,7 +756,7 @@ const app = {
                 title.innerText = '编辑资源';
                 typeSel.value = res.type; typeSel.disabled = true;
                 nameInput.value = res.name;
-                parentSel.value = res.parentId || ''; // 填充所属文件夹
+                parentSel.value = res.parentId || '';
 
                 if (res.type === 'link') document.getElementById('resTextInput').value = res.content;
                 else if (res.type === 'md' || res.type === 'code') document.getElementById('resTextArea').value = res.content;
