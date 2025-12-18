@@ -134,6 +134,7 @@ body {
     display: flex; align-items: center; padding: 8px 10px; border-radius: var(--radius-md);
     cursor: pointer; transition: all 0.2s; border: 1px solid transparent; user-select: none;
     color: var(--text-main);
+    position: relative; /* [重要] 确保绝对定位的操作按钮相对于当前行显示 */
 }
 .res-folder { font-weight: 600; }
 .res-folder:hover { background: rgba(128,128,128,0.08); }

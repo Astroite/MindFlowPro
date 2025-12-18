@@ -1,12 +1,15 @@
 /**
  * MindFlow - App Logic
- * 更新内容：修复孤儿节点升级后尺寸过大问题，增加 Delete/Backspace 快捷键删除节点
+ * 更新内容：
+ * 1. 修复文件夹删除时的级联清理逻辑（自动断开子文件的节点关联）
+ * 2. 增强资源重命名和删除的健壮性
+ * 3. 渲染优化：视锥剔除 (Viewport Culling)
  */
 
 const app = {
     // --- 配置 ---
     config: {
-        appVersion: '2.5.0',
+        appVersion: '2.5.2', // 版本号更新
         nodeRadius: 40, subRadius: 30, linkDistance: 150, chargeStrength: -300, collideRadius: 55,
         dbName: 'MindFlowDB', storeName: 'projects',
         previewDelay: 50,
@@ -29,9 +32,9 @@ const app = {
         camera: { x: 0, y: 0, k: 1 },
         simulation: null,
 
-        // [修改] 升级为多选集合 Set<NodeId>
+        // 多选集合 Set<NodeId>
         selectedNodes: new Set(),
-        // [新增] 专门记录当前正在编辑（双击打开菜单）的节点，与选中态解耦
+        // 专门记录当前正在编辑（双击打开菜单）的节点，与选中态解耦
         editingNode: null,
 
         tempFileBase64: null, hoverNode: null, tooltipTimer: null,
@@ -237,9 +240,7 @@ const app = {
 
             app.state.simulation = d3.forceSimulation()
                 .force("link", d3.forceLink().id(d => d.id).distance(app.config.linkDistance))
-                // Charge 力度，根节点更重
                 .force("charge", d3.forceManyBody().strength(d => d.type === 'root' ? app.config.chargeStrength * 3 : app.config.chargeStrength))
-                // 碰撞体积，根节点更大
                 .force("collide", d3.forceCollide().radius(d => d.type === 'root' ? app.config.collideRadius * 1.5 : app.config.collideRadius))
                 .force("x", d3.forceX(0).strength(0.01))
                 .force("y", d3.forceY(0).strength(0.01))
@@ -266,6 +267,21 @@ const app = {
             app.state.simulation.alpha(1).restart();
         },
 
+        // [新增] 检查节点是否在视口可见范围内
+        isNodeVisible: function(node, padding = 100) {
+            const cam = app.state.camera;
+            const r = (node.type === 'root' ? app.config.nodeRadius : app.config.subRadius) * (node.scale || 1);
+
+            // 计算视口在世界坐标系中的边界
+            const minX = -cam.x / cam.k - padding;
+            const minY = -cam.y / cam.k - padding;
+            const maxX = (this.width - cam.x) / cam.k + padding;
+            const maxY = (this.height - cam.y) / cam.k + padding;
+
+            return (node.x + r > minX && node.x - r < maxX &&
+                node.y + r > minY && node.y - r < maxY);
+        },
+
         addRootNode: function() {
             if (!app.state.currentId) return app.ui.toast('请先新建项目');
 
@@ -283,7 +299,6 @@ const app = {
             };
             app.state.nodes.push(node);
 
-            // 新建节点自动选中
             app.state.selectedNodes.clear();
             app.state.selectedNodes.add(node.id);
 
@@ -301,7 +316,6 @@ const app = {
             app.state.nodes.push(node);
             app.state.links.push({ source: parent.id, target: node.id });
 
-            // 新增子节点自动选中
             app.state.selectedNodes.clear();
             app.state.selectedNodes.add(node.id);
 
@@ -316,6 +330,7 @@ const app = {
             }
         },
 
+        // [修改] 引入视锥剔除优化的渲染循环
         renderLoop: function() {
             const ctx = this.ctx; const cam = app.state.camera;
             ctx.clearRect(0, 0, this.width, this.height);
@@ -323,16 +338,26 @@ const app = {
             ctx.translate(cam.x, cam.y);
             ctx.scale(cam.k, cam.k);
 
+            // 1. 绘制连线
             ctx.beginPath();
             ctx.strokeStyle = app.config.colors.link;
             ctx.lineWidth = 1.5;
             app.state.links.forEach(l => {
                 const s = l.source, t = l.target;
-                if (s.x && t.x) { ctx.moveTo(s.x, s.y); ctx.lineTo(t.x, t.y); }
+                if (s.x && t.x) {
+                    if (this.isNodeVisible(s, 200) || this.isNodeVisible(t, 200)) {
+                        ctx.moveTo(s.x, s.y);
+                        ctx.lineTo(t.x, t.y);
+                    }
+                }
             });
             ctx.stroke();
 
+            // 2. 绘制节点
             app.state.nodes.forEach(n => {
+                // [优化点] 不可见则直接跳过后续绘制计算
+                if (!this.isNodeVisible(n)) return;
+
                 if (typeof n.scale === 'undefined') n.scale = 1;
                 if (n.scale < 1) { n.scale += (1 - n.scale) * 0.15; if (n.scale > 0.99) n.scale = 1; }
 
@@ -387,7 +412,6 @@ const app = {
                     ctx.lineWidth = 1.5; ctx.strokeStyle = app.config.colors.outline; ctx.stroke();
                 }
 
-                // [修改] 多选渲染：检查 Set 集合
                 if (app.state.selectedNodes.has(n.id)) {
                     ctx.beginPath(); ctx.arc(n.x, n.y, r + 5, 0, Math.PI * 2);
                     ctx.strokeStyle = app.config.colors.selection; ctx.lineWidth = 2; ctx.stroke();
@@ -446,11 +470,8 @@ const app = {
                 if (hitNode) { hitNode.resId = resId; app.ui.toast('资源已关联'); app.storage.forceSave(); }
             });
 
-            // [新增] 键盘事件监听
             window.addEventListener('keydown', (e) => {
                 if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
-
-                // 删除快捷键
                 if (e.key === 'Delete' || e.key === 'Backspace') {
                     if (app.state.selectedNodes.size > 0) {
                         app.data.deleteNode();
@@ -480,34 +501,29 @@ const app = {
                     if (Math.hypot(m.x - n.x, m.y - n.y) < r) { hitNode = n; break; }
                 }
 
-                // [修改] 选择逻辑：Ctrl/Meta 实现多选
                 if (hitNode) {
                     if (e.ctrlKey || e.metaKey) {
-                        // Toggle 选中
                         if (app.state.selectedNodes.has(hitNode.id)) {
                             app.state.selectedNodes.delete(hitNode.id);
-                            this.dragSubject = null; // 取消选中时不拖拽
+                            this.dragSubject = null;
                         } else {
                             app.state.selectedNodes.add(hitNode.id);
-                            this.dragSubject = hitNode; // 开始拖拽
+                            this.dragSubject = hitNode;
                         }
                     } else {
-                        // 单选：如果点的不是已选中的节点之一，清空其他
                         if (!app.state.selectedNodes.has(hitNode.id)) {
                             app.state.selectedNodes.clear();
                             app.state.selectedNodes.add(hitNode.id);
                         }
-                        this.dragSubject = hitNode; // 开始拖拽
+                        this.dragSubject = hitNode;
                     }
 
-                    // 拖拽初始化
                     if (this.dragSubject) {
                         this.dragSubject.fx = this.dragSubject.x;
                         this.dragSubject.fy = this.dragSubject.y;
                         app.state.simulation.alphaTarget(0.3).restart();
                     }
                 } else {
-                    // 点击空白处清空选中
                     if (!e.ctrlKey && !e.metaKey) {
                         app.state.selectedNodes.clear();
                     }
@@ -541,8 +557,6 @@ const app = {
                 const m = getPos(e);
                 if (this.dragSubject) {
                     this.dragSubject.fx = m.x; this.dragSubject.fy = m.y;
-                    // 这里可以扩展：如果是多选，其他选中的节点也应该跟着一起动（偏移量相同）
-                    // 暂时只支持拖拽当前抓取的节点
                 }
                 else if (this.isPanning) {
                     app.state.camera.x += m.rawX - this.startPan.x; app.state.camera.y += m.rawY - this.startPan.y;
@@ -573,7 +587,6 @@ const app = {
             canvas.addEventListener('dblclick', (e) => {
                 const m = getPos(e);
                 const hit = app.state.nodes.find(n => Math.hypot(m.x - n.x, m.y - n.y) < (n.type==='root'?40:30));
-                // [修改] 双击时，为了避免歧义，只选中当前这个节点，并打开菜单
                 if (hit) {
                     app.state.selectedNodes.clear();
                     app.state.selectedNodes.add(hit.id);
@@ -600,15 +613,17 @@ const app = {
             app.storage.forceSave();
         },
 
+        // [修改] 优化文件夹重命名，增加非空和去重检查
         renameFolder: function(id) {
             const folder = app.state.resources.find(r => r.id === id);
             if (!folder) return;
-            const newName = prompt('输入新名称:', folder.name);
-            if (newName && newName.trim()) {
+
+            const newName = prompt('输入新文件夹名称:', folder.name);
+            if (newName && newName.trim() !== '' && newName !== folder.name) {
                 folder.name = newName.trim();
                 app.ui.renderResourceTree();
                 app.storage.forceSave();
-                app.ui.toast('已重命名');
+                app.ui.toast('文件夹已重命名');
             }
         },
 
@@ -674,22 +689,41 @@ const app = {
             app.ui.openResModal('Edit', res);
         },
 
+        // [修改] 级联删除资源：如果是文件夹，同时删除其内容，并清理画布上关联的节点引用
         deleteResource: function(id) {
-            if (!confirm('确定删除？')) return;
             const res = app.state.resources.find(r => r.id === id);
-            if (res && res.type === 'folder') {
-                app.state.resources = app.state.resources.filter(r => r.parentId !== id && r.id !== id);
-            } else {
-                app.state.resources = app.state.resources.filter(r => r.id !== id);
+            if (!res) return;
+
+            let confirmMsg = '确定删除此资源吗？';
+            if (res.type === 'folder') confirmMsg = '确定删除此文件夹及其所有内容吗？此操作不可恢复。';
+            if (!confirm(confirmMsg)) return;
+
+            // 收集所有需要删除的资源 ID
+            let idsToDelete = [id];
+            if (res.type === 'folder') {
+                const children = app.state.resources.filter(r => r.parentId === id);
+                children.forEach(c => idsToDelete.push(c.id));
             }
-            app.state.nodes.forEach(n => { if (n.resId === id) n.resId = null; });
+
+            // 1. 清理画布上所有关联了这些资源的节点的 resId
+            let updateNodes = false;
+            app.state.nodes.forEach(n => {
+                if (n.resId && idsToDelete.includes(n.resId)) {
+                    n.resId = null;
+                    updateNodes = true;
+                }
+            });
+
+            // 2. 从资源列表中删除
+            app.state.resources = app.state.resources.filter(r => !idsToDelete.includes(r.id));
+
+            // 3. 更新 UI
             app.ui.renderResourceTree();
             app.storage.forceSave();
-            app.ui.toast('已删除');
+            app.ui.toast(idsToDelete.length > 1 ? `已删除文件夹及 ${idsToDelete.length-1} 个文件` : '资源已删除');
         },
 
         saveNodeEdit: function() {
-            // [修改] 编辑使用的是 editingNode
             const node = app.state.editingNode;
             if (node) {
                 node.label = document.getElementById('nodeLabel').value;
@@ -699,28 +733,16 @@ const app = {
         },
 
         deleteNode: function() {
-            // [修改] 批量删除选中的所有节点，或当前编辑的节点
             let nodesToDelete = Array.from(app.state.selectedNodes);
             if (app.state.editingNode && nodesToDelete.indexOf(app.state.editingNode.id) === -1) {
-                // 如果当前在菜单里操作的节点不在选中列表里（通常双击会选中，所以不太可能），把它加进去
                 nodesToDelete = [app.state.editingNode.id];
             }
 
             if (nodesToDelete.length === 0) return;
 
-            // 1. 过滤掉要删除的节点
             app.state.nodes = app.state.nodes.filter(n => !nodesToDelete.includes(n.id));
 
-            // 2. 处理连线 & 孤儿升级
-            // 找出所有连接到已删除节点的连线
             const deadNodeSet = new Set(nodesToDelete);
-
-            // 记录哪些幸存节点是被删除节点的子节点（Target）
-            // 我们的连线方向是 Parent -> Child
-            // 如果 Link.source 在 deadNodeSet 中，且 Link.target 不在 deadNodeSet 中，
-            // 那么 Link.target 就是一个“孤儿”，需要升级为 Root。
-
-            // 先遍历当前所有 Links
             const survivingLinks = [];
             const potentialOrphans = new Set();
 
@@ -732,30 +754,23 @@ const app = {
                 const targetIsDead = deadNodeSet.has(tId);
 
                 if (sourceIsDead && !targetIsDead) {
-                    // 父死子活 -> 子变孤儿
                     potentialOrphans.add(tId);
                 } else if (!sourceIsDead && targetIsDead) {
-                    // 父活子死 -> 正常断开，父节点不受影响
                 } else if (sourceIsDead && targetIsDead) {
-                    // 都死 -> 连线消失
                 } else {
-                    // 都活 -> 保留连线
                     survivingLinks.push(l);
                 }
             });
 
             app.state.links = survivingLinks;
 
-            // 3. 处理孤儿升级
-            // 检查潜在孤儿是否还有其他父节点（目前逻辑是单父，但为了健壮性检查一下入度）
-            // 简单处理：只要失去了一条来自父节点的连线，且它本身是 sub，就检查它现在还有没有入边
             potentialOrphans.forEach(orphanId => {
                 const hasIncoming = app.state.links.some(l => (l.target.id || l.target) === orphanId);
                 if (!hasIncoming) {
                     const orphan = app.state.nodes.find(n => n.id === orphanId);
                     if (orphan) {
-                        orphan.type = 'root'; // 升级为根节点
-                        orphan.scale = 1; // [修复] 修正大小为标准根节点大小 (原为 1.2)
+                        orphan.type = 'root';
+                        orphan.scale = 1;
                     }
                 }
             });
@@ -830,7 +845,6 @@ const app = {
             });
         },
 
-        // [新增] 切换主题逻辑
         toggleTheme: function() {
             const body = document.body;
             if (body.hasAttribute('data-theme')) {
@@ -842,7 +856,6 @@ const app = {
             }
         },
 
-        // [新增] 搜索过滤逻辑
         filterResources: function(keyword) {
             app.state.searchKeyword = keyword.toLowerCase();
             this.renderResourceTree();
@@ -939,7 +952,6 @@ const app = {
             const keyword = app.state.searchKeyword;
             const folders = resources.filter(r => r.type === 'folder');
 
-            // 搜索逻辑
             const rootFiles = resources.filter(r => {
                 if (keyword && !r.name.toLowerCase().includes(keyword)) return false;
                 return !r.parentId && r.type !== 'folder';
@@ -948,26 +960,27 @@ const app = {
             let html = '';
 
             folders.forEach(folder => {
-                // 如果有搜索词，只显示包含关键词的文件夹或其内容包含关键词的文件夹
                 const children = resources.filter(r => r.parentId === folder.id && r.type !== 'folder');
                 const matchChildren = children.filter(c => !keyword || c.name.toLowerCase().includes(keyword));
 
                 if (keyword && !folder.name.toLowerCase().includes(keyword) && matchChildren.length === 0) return;
 
-                // 搜索时自动展开文件夹
                 const isOpen = keyword ? true : app.state.expandedFolders.has(folder.id);
 
+                // [修改] 增加 oncontextmenu 事件，支持右键操作（尽管目前逻辑和按钮一致，但这符合桌面软件直觉）
                 html += `
                     <div class="res-folder ${isOpen?'open':''}" 
                          onclick="app.ui.toggleFolder('${folder.id}')"
+                         oncontextmenu="event.preventDefault(); app.data.renameFolder('${folder.id}');"
                          ondragover="app.ui.dragOver(event, '${folder.id}')"
                          ondrop="app.ui.drop(event, '${folder.id}')"
-                         ondragleave="app.ui.dragLeave(event)">
+                         ondragleave="app.ui.dragLeave(event)"
+                         title="右键点击可快速重命名">
                         <div class="folder-icon">▶</div>
                         <div class="res-info"><div class="res-name">${this.highlightText(folder.name, keyword)}</div></div>
                         <div class="res-actions">
                             <div class="btn-res-action" onclick="event.stopPropagation(); app.data.renameFolder('${folder.id}')" title="重命名">✎</div>
-                            <div class="btn-res-action del" onclick="event.stopPropagation(); app.data.deleteResource('${folder.id}')">🗑</div>
+                            <div class="btn-res-action del" onclick="event.stopPropagation(); app.data.deleteResource('${folder.id}')" title="删除文件夹">🗑</div>
                         </div>
                     </div>
                     <div class="folder-children ${isOpen?'open':''}">
@@ -1068,7 +1081,7 @@ const app = {
         openModal: function() { this.openResModal('New'); },
         closeModal: function(id) { document.getElementById(id).style.display='none'; },
 
-        // [修改] 打开节点菜单时，设置 editingNode
+        // 打开节点菜单时，设置 editingNode
         openNodeMenu: function(node, x, y) {
             const m = document.getElementById('nodeMenu');
             app.state.editingNode = node; // 记录当前正在编辑的节点
