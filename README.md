@@ -47,21 +47,12 @@ MindFlow 不仅仅是导图，更是一个资源库。支持以下类型：
 
 ### 本地运行
 
-由于使用了 ES Modules 和 IndexedDB，建议通过本地服务器运行：
-
 1. 克隆仓库：
 ```
-git clone [https://github.com/your-username/mindflow.git](https://github.com/your-username/mindflow.git)
+git clone https://github.com:Astroite/MindFlowPro.git
 ```
 
-2. 使用 VS Code 的 "Live Server" 插件或 Python 启动服务：
-
-``` python
-# Python 3
-python -m http.server 8000
-```
-
-3. 浏览器访问 http://localhost:8000。
+2. 打开index.html即可
 
 ## 🛠️ 技术栈
 
