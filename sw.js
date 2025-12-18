@@ -1,5 +1,5 @@
 // [重要] 每次发布新版本，务必修改这里的版本号！
-const CACHE_NAME = 'mindflow-v1.1';
+const CACHE_NAME = 'mindflow-v1.2';
 
 const ASSETS_TO_CACHE = [
     './',
