@@ -1,15 +1,13 @@
 /**
  * MindFlow - App Logic
  * 更新内容：
- * 1. 引入“操作气泡”交互模式 (Click -> Bubble -> Edit/Delete)
- * 2. 移除双击打开菜单逻辑
- * 3. 气泡跟随节点实时移动
+ * 1. 修复气泡定位偏移问题 (加入 canvasRect 偏移量计算)
  */
 
 const app = {
     // --- 配置 ---
     config: {
-        appVersion: '2.5.3', // 版本号更新
+        appVersion: '2.5.5', // 版本号更新
         nodeRadius: 40, subRadius: 30, linkDistance: 150, chargeStrength: -300, collideRadius: 55,
         dbName: 'MindFlowDB', storeName: 'projects',
         previewDelay: 50,
@@ -35,7 +33,7 @@ const app = {
         // 多选集合 Set<NodeId>
         selectedNodes: new Set(),
 
-        // [修改] 气泡交互状态
+        // 气泡交互状态
         bubbleNode: null, // 当前显示气泡的节点
         editingNode: null, // 当前正在面板中编辑的节点
 
@@ -303,7 +301,7 @@ const app = {
 
             app.state.selectedNodes.clear();
             app.state.selectedNodes.add(node.id);
-            // [新增] 添加节点后立即显示气泡，方便后续操作
+            // 添加节点后立即显示气泡
             app.ui.showNodeBubble(node);
 
             this.updateSimulation(); app.storage.forceSave();
@@ -437,7 +435,7 @@ const app = {
 
             ctx.restore();
 
-            // [新增] 每一帧都更新气泡位置，实现完美跟随（包括物理运动时）
+            // 每一帧都更新气泡位置，实现完美跟随（包括物理运动时）
             app.ui.updateBubblePosition();
 
             requestAnimationFrame(() => this.renderLoop());
@@ -873,7 +871,7 @@ const app = {
             }
         },
 
-        // [新增] 气泡相关方法
+        // [修改] 气泡跟随逻辑：中心定位 + 传入 CSS 变量 + Canvas位置校正
         showNodeBubble: function(node) {
             app.state.bubbleNode = node;
             const bubble = document.getElementById('nodeBubble');
@@ -893,15 +891,22 @@ const app = {
             const cam = app.state.camera;
             const r = (node.type === 'root' ? app.config.nodeRadius : app.config.subRadius) * (node.scale || 1);
 
-            // 计算节点在屏幕上的位置
-            const screenX = node.x * cam.k + cam.x;
-            const screenY = node.y * cam.k + cam.y;
+            // [Fix] 获取 Canvas 元素的位置信息，因为 Canvas 可能被侧边栏挤偏
+            const canvasRect = app.graph.canvas ? app.graph.canvas.getBoundingClientRect() : document.getElementById('mainCanvas').getBoundingClientRect();
+
+            // 计算节点在屏幕上的绝对位置 = Canvas内偏移 + Canvas本身相对于窗口的偏移
+            const screenX = (node.x * cam.k + cam.x) + canvasRect.left;
+            const screenY = (node.y * cam.k + cam.y) + canvasRect.top;
             const screenR = r * cam.k;
 
             const bubble = document.getElementById('nodeBubble');
-            // 将气泡定位到节点正上方 (marginTop 在 CSS 中处理了间距)
+
+            // 定位到节点中心
             bubble.style.left = screenX + 'px';
-            bubble.style.top = (screenY - screenR) + 'px';
+            bubble.style.top = screenY + 'px';
+
+            // 传递半径给 CSS，让 CSS 决定偏移量
+            bubble.style.setProperty('--node-radius', screenR + 'px');
         },
 
         onBubbleEdit: function() {
@@ -1148,7 +1153,7 @@ const app = {
         openModal: function() { this.openResModal('New'); },
         closeModal: function(id) { document.getElementById(id).style.display='none'; },
 
-        // [修改] 打开节点编辑面板
+        // 打开节点菜单时，设置 editingNode
         openNodeMenu: function(node, x, y) {
             const m = document.getElementById('nodeMenu');
             app.state.editingNode = node;

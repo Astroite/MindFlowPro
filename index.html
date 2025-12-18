@@ -73,13 +73,14 @@
     </div>
 </div>
 
-<!-- [新增] 节点操作气泡 -->
-<div id="nodeBubble" class="node-bubble" style="display: none;">
-    <button class="bubble-btn" onclick="app.ui.onBubbleEdit()" title="编辑节点">
+<!-- [修改] 独立气泡容器：不仅没有背景，而且作为定位基准点 -->
+<div id="nodeBubble" class="node-bubble-container" style="display: none;">
+    <!-- 编辑气泡 -->
+    <button class="bubble-btn action-edit" onclick="app.ui.onBubbleEdit()" title="编辑节点">
         <span style="font-size: 16px;">✏️</span>
     </button>
-    <div class="bubble-divider"></div>
-    <button class="bubble-btn delete" onclick="app.ui.onBubbleDelete()" title="删除节点">
+    <!-- 删除气泡 -->
+    <button class="bubble-btn action-delete" onclick="app.ui.onBubbleDelete()" title="删除节点">
         <span style="font-size: 16px;">🗑️</span>
     </button>
 </div>
