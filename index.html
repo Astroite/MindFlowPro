@@ -5,19 +5,45 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>MindFlow - 本地化视觉思维导图</title>
 
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#667eea">
+    <link rel="apple-touch-icon" href="icons/icon-192.png">
+
     <link rel="stylesheet" href="css/style.css">
 
-    <!-- [修改] 第三方库改为本地引用，确保离线可用 -->
-    <!-- 请确保 js/lib/ 目录下存在以下三个文件 -->
+    <!-- 本地库引用 -->
     <script src="js/lib/d3.v7.min.js"></script>
     <script src="js/lib/localforage.min.js"></script>
     <script src="js/lib/marked.min.js"></script>
+
+    <style>
+        /* [新增] 更新提示条样式 */
+        #update-toast {
+            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(100px);
+            background: #333; color: white; padding: 12px 20px; border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3); z-index: 3000;
+            display: flex; align-items: center; gap: 15px; opacity: 0; transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+        #update-toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+        #reload-btn {
+            background: #667eea; border: none; color: white; padding: 5px 12px;
+            border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 13px;
+        }
+        #reload-btn:hover { background: #5a67d8; }
+    </style>
 </head>
 <body>
 
 <input type="file" id="importInput" style="display: none;" accept=".json,.mindflow">
 
+<!-- [新增] 更新提示条结构 -->
+<div id="update-toast">
+    <span>发现新版本，是否更新？</span>
+    <button id="reload-btn">立即刷新</button>
+</div>
+
 <div class="app-container">
+    <!-- 侧边栏 -->
     <div class="sidebar closed" id="sidebar">
         <div class="sidebar-header">
             <div class="brand">MindFlow</div>
@@ -26,8 +52,7 @@
                     <option value="" disabled selected>正在加载...</option>
                 </select>
                 <div class="btn-group-mini">
-                    <!-- [修改] 使用新的 API 触发方法 -->
-                    <button class="btn-icon" title="保存/导出到磁盘" onclick="app.data.triggerSaveDisk()">💾</button>
+                    <button class="btn-icon" title="导出到本地磁盘" onclick="app.data.triggerSaveDisk()">💾</button>
                     <button class="btn-icon" title="从磁盘打开项目" onclick="app.data.triggerOpenDisk()">📂</button>
                     <button class="btn-icon danger" title="删除当前项目" onclick="app.ui.confirmDeleteProject()">🗑️</button>
                 </div>
@@ -46,6 +71,7 @@
         </div>
     </div>
 
+    <!-- 主画布区域 -->
     <div class="main-area">
         <div class="toolbar">
             <button class="tool-btn" onclick="app.ui.toggleSidebar()" title="切换侧边栏">☰</button>
@@ -78,11 +104,10 @@
     </div>
 </div>
 
-<!-- 弹窗：添加/编辑资源 -->
+<!-- 弹窗组件保持不变 -->
 <div class="modal-overlay" id="resModal" style="display: none;">
     <div class="modal-box">
         <h3 id="resModalTitle">添加资源</h3>
-
         <div class="form-group">
             <label>类型</label>
             <select id="resType" class="form-input" onchange="app.ui.toggleResInput()">
@@ -94,31 +119,24 @@
                 <option value="link">🔗 链接 (Link)</option>
             </select>
         </div>
-
         <div class="form-group">
             <label>位置 (文件夹)</label>
-            <select id="resParentId" class="form-input">
-                <option value="">(根目录)</option>
-            </select>
+            <select id="resParentId" class="form-input"><option value="">(根目录)</option></select>
         </div>
-
         <div class="form-group">
             <label>名称</label>
             <input type="text" id="resName" class="form-input" placeholder="输入资源名称">
         </div>
-
         <div class="form-group dynamic-input" id="groupFile">
             <label id="fileLabel">选择文件</label>
             <input type="file" id="resFile" class="form-input">
             <small style="color:#666; font-size:12px;">文件存储于本地数据库，建议控制大小。</small>
         </div>
-
         <div class="form-group dynamic-input" id="groupText" style="display: none;">
             <label id="textLabel">内容</label>
             <input type="text" id="resTextInput" class="form-input" placeholder="https://..." style="display:none;">
             <textarea id="resTextArea" class="form-input" rows="6" placeholder="在此输入内容..." style="font-family: monospace;"></textarea>
         </div>
-
         <div class="form-group dynamic-input" id="groupColor" style="display: none;">
             <label>选择颜色</label>
             <div style="display:flex; align-items:center; gap:10px;">
@@ -126,7 +144,6 @@
                 <span id="resColorValue" style="font-family:monospace; font-weight:bold;">#000000</span>
             </div>
         </div>
-
         <div class="modal-actions">
             <button class="btn-text" onclick="app.ui.closeModal('resModal')">取消</button>
             <button class="btn-primary" onclick="app.data.saveResource()">保存</button>
@@ -134,7 +151,6 @@
     </div>
 </div>
 
-<!-- 节点菜单 -->
 <div class="node-menu" id="nodeMenu" style="display: none;">
     <div class="form-group">
         <label>节点名称</label>
@@ -153,11 +169,61 @@
 <div class="toast" id="toast"></div>
 
 <script src="js/app.js"></script>
+
+<!-- [新增] 增强版 SW 注册与更新逻辑 -->
 <script>
     if (window.innerWidth < 768) {
         document.getElementById('sidebar').classList.add('closed');
     } else {
         document.getElementById('sidebar').classList.remove('closed');
+    }
+
+    if ('serviceWorker' in navigator) {
+        let newWorker;
+
+        // 显示更新提示条
+        function showUpdateBar() {
+            const bar = document.getElementById('update-toast');
+            bar.classList.add('show');
+
+            document.getElementById('reload-btn').addEventListener('click', () => {
+                bar.classList.remove('show');
+                if (newWorker) {
+                    // 告诉新 SW 马上接管
+                    newWorker.postMessage({ type: 'SKIP_WAITING' });
+                }
+            });
+        }
+
+        window.addEventListener('load', () => {
+            navigator.serviceWorker.register('./sw.js').then(reg => {
+                // 1. 检查是否已经有等待更新的 worker
+                if (reg.waiting) {
+                    newWorker = reg.waiting;
+                    showUpdateBar();
+                    return;
+                }
+
+                // 2. 监听新的 worker 安装过程
+                reg.addEventListener('updatefound', () => {
+                    newWorker = reg.installing;
+                    newWorker.addEventListener('statechange', () => {
+                        // 如果安装完成且当前已有 controller (说明不是第一次安装)
+                        if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                            showUpdateBar();
+                        }
+                    });
+                });
+            });
+
+            // 3. 当 controller 变化 (新 SW 激活) 时，自动刷新页面
+            let refreshing;
+            navigator.serviceWorker.addEventListener('controllerchange', () => {
+                if (refreshing) return;
+                window.location.reload();
+                refreshing = true;
+            });
+        });
     }
 </script>
 </body>
