@@ -1,16 +1,16 @@
 /**
  * MindFlow - App Logic
- * 更新内容：UI视觉升级 - 谷歌 Material Design 风格节点渲染
+ * 更新内容：优化根节点视觉权重（更深的阴影、更强的层级感）
  */
 
 const app = {
     // --- 配置 ---
     config: {
-        appVersion: '2.1.0',
+        appVersion: '2.2.0',
         nodeRadius: 40, subRadius: 30, linkDistance: 150, chargeStrength: -800, collideRadius: 55,
         dbName: 'MindFlowDB', storeName: 'projects',
         previewDelay: 50,
-        // [新增] 视觉配置
+        // 视觉配置
         colors: {
             primary: '#6366f1',
             surface: '#ffffff',
@@ -112,7 +112,6 @@ const app = {
                 document.getElementById('projTitleInput').value = proj.name;
                 app.graph.resetCamera(); app.graph.imageCache.clear();
                 app.state.searchKeyword = '';
-                // document.querySelector('.search-input').value = ''; // 如果有搜索框
                 app.ui.renderResourceTree();
                 app.ui.toast(`已加载: ${proj.name}`);
                 app.graph.updateSimulation();
@@ -232,7 +231,8 @@ const app = {
                 .force("link", d3.forceLink().id(d => d.id).distance(app.config.linkDistance))
                 .force("charge", d3.forceManyBody().strength(app.config.chargeStrength))
                 .force("collide", d3.forceCollide().radius(app.config.collideRadius))
-                .force("center", d3.forceCenter(0, 0).strength(0.02))
+                .force("x", d3.forceX(0).strength(0.01))
+                .force("y", d3.forceY(0).strength(0.01))
                 .on("tick", () => {});
 
             this.bindEvents();
@@ -258,12 +258,21 @@ const app = {
 
         addRootNode: function() {
             if (!app.state.currentId) return app.ui.toast('请先新建项目');
-            if (app.state.nodes.length > 0) return app.ui.toast('根节点已存在');
+
+            const cam = app.state.camera;
+            const cx = (this.width / 2 - cam.x) / cam.k;
+            const cy = (this.height / 2 - cam.y) / cam.k;
+
             app.state.nodes.push({
-                id: 'n_' + Date.now(), type: 'root', x: 0, y: 0, label: '中心主题',
+                id: 'n_' + Date.now(),
+                type: 'root',
+                x: cx + (Math.random() - 0.5) * 50,
+                y: cy + (Math.random() - 0.5) * 50,
+                label: '新主题',
                 scale: 0.1
             });
             this.updateSimulation(); app.storage.forceSave();
+            app.ui.toast('已添加新主题节点');
         },
 
         addChildNode: function(parent) {
@@ -292,9 +301,8 @@ const app = {
             ctx.translate(cam.x, cam.y);
             ctx.scale(cam.k, cam.k);
 
-            // [修改] 连线：颜色更淡，更优雅
             ctx.beginPath();
-            ctx.strokeStyle = app.config.colors.link; // 使用配置色
+            ctx.strokeStyle = app.config.colors.link;
             ctx.lineWidth = 1.5;
             app.state.links.forEach(l => {
                 const s = l.source, t = l.target;
@@ -303,13 +311,10 @@ const app = {
             ctx.stroke();
 
             app.state.nodes.forEach(n => {
-                // 生长动画
                 if (typeof n.scale === 'undefined') n.scale = 1;
                 if (n.scale < 1) { n.scale += (1 - n.scale) * 0.15; if (n.scale > 0.99) n.scale = 1; }
 
                 const r = (n.type === 'root' ? app.config.nodeRadius : app.config.subRadius) * (n.scale || 1);
-
-                // [修改] 颜色与样式逻辑
                 let fillColor = app.config.colors.surface;
                 let textColor = app.config.colors.textMain;
                 let hasImg = false;
@@ -321,32 +326,31 @@ const app = {
                     textColor = app.config.colors.textLight;
                 }
 
-                if (res && res.type === 'color') {
-                    fillColor = res.content;
-                    // 简单的亮度判断来决定文字颜色
-                    // 这里简化处理，直接用白色描边或阴影可能更好，或者不做反色
-                }
+                if (res && res.type === 'color') { fillColor = res.content; }
 
-                // [新增] 柔和的阴影 (Elevation)
-                ctx.shadowColor = 'rgba(0,0,0,0.08)';
-                ctx.shadowBlur = 12 * (n.scale || 1);
-                ctx.shadowOffsetY = 4 * (n.scale || 1);
+                // [Modification] Enhanced Shadow/Elevation for Root Nodes
+                if (n.type === 'root') {
+                    // Heavy, elevated shadow
+                    ctx.shadowColor = 'rgba(0,0,0,0.2)';
+                    ctx.shadowBlur = 25 * (n.scale || 1);
+                    ctx.shadowOffsetY = 8 * (n.scale || 1);
+                } else {
+                    // Standard light shadow
+                    ctx.shadowColor = 'rgba(0,0,0,0.08)';
+                    ctx.shadowBlur = 12 * (n.scale || 1);
+                    ctx.shadowOffsetY = 4 * (n.scale || 1);
+                }
                 ctx.shadowOffsetX = 0;
 
                 ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
                 ctx.fillStyle = fillColor; ctx.fill();
-
-                // 重置阴影，避免影响后续绘制
                 ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
 
-                // [新增] 图片/图标绘制
                 if (res) {
                     if (res.type === 'image') { this.drawImageInNode(n, res, r); hasImg = true; }
                     else if (res.type !== 'color') {
                         let icon = '🔗';
                         if (res.type === 'md') icon = '📝'; else if (res.type === 'code') icon = '💻'; else if (res.type === 'audio') icon = '🎤';
-
-                        // 根节点图标为白色，子节点为主题色或深色
                         ctx.fillStyle = (n.type === 'root') ? 'rgba(255,255,255,0.9)' : '#f59e0b';
                         ctx.font = `${20 * (n.scale||1)}px Arial`;
                         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -354,23 +358,24 @@ const app = {
                     }
                 }
 
-                // [新增] 细微的描边 (仅子节点)
-                if (n.type !== 'root' && (!res || res.type !== 'color')) {
-                    ctx.lineWidth = 1.5;
-                    ctx.strokeStyle = app.config.colors.outline;
-                    ctx.stroke();
+                // [Modification] Subtle Stroke/Border Logic
+                if (n.type === 'root') {
+                    // Optional: White inner border for root nodes to separate from heavy shadow
+                    if (!res || res.type !== 'color') {
+                        ctx.lineWidth = 2;
+                        ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+                        ctx.stroke();
+                    }
+                } else if (!res || res.type !== 'color') {
+                    // Standard outline for sub nodes
+                    ctx.lineWidth = 1.5; ctx.strokeStyle = app.config.colors.outline; ctx.stroke();
                 }
 
-                // [修改] 选中态：外部对焦环 (Focus Ring)
                 if (app.state.selectedNode === n) {
-                    ctx.beginPath();
-                    ctx.arc(n.x, n.y, r + 5, 0, Math.PI * 2);
-                    ctx.strokeStyle = app.config.colors.selection;
-                    ctx.lineWidth = 2;
-                    ctx.stroke();
+                    ctx.beginPath(); ctx.arc(n.x, n.y, r + 5, 0, Math.PI * 2);
+                    ctx.strokeStyle = app.config.colors.selection; ctx.lineWidth = 2; ctx.stroke();
                 }
 
-                // [修改] 文字绘制
                 ctx.globalAlpha = n.scale || 1;
                 ctx.fillStyle = textColor;
                 ctx.font = `${n.type==='root'?'bold':''} ${12 * (n.scale||1)}px "Segoe UI", sans-serif`;
