@@ -1,12 +1,12 @@
 /**
  * MindFlow - App Logic
- * 更新内容：支持从侧边栏拖拽资源到画布节点关联，支持色卡资源改变节点颜色
+ * 更新内容：修复侧边栏资源无法预览的问题，重构 Tooltip 逻辑以支持全局预览
  */
 
 const app = {
     // --- 配置 ---
     config: {
-        appVersion: '1.6.0',
+        appVersion: '1.6.1',
         nodeRadius: 40, subRadius: 30, linkDistance: 150, chargeStrength: -800, collideRadius: 55,
         dbName: 'MindFlowDB', storeName: 'projects',
         previewDelay: 50
@@ -251,7 +251,6 @@ const app = {
             app.state.nodes.forEach(n => {
                 const r = n.type === 'root' ? app.config.nodeRadius : app.config.subRadius;
 
-                // [修改] 背景色逻辑：如果是色卡，直接应用颜色
                 let fillColor = 'white';
                 let hasImg = false;
                 const res = n.resId ? app.state.resources.find(r => r.id === n.resId) : null;
@@ -268,7 +267,6 @@ const app = {
                     if (res.type === 'image') {
                         this.drawImageInNode(n, res, r); hasImg = true;
                     } else if (res.type !== 'color') {
-                        // 非图片且非色卡，绘制图标
                         let icon = '🔗';
                         if (res.type === 'md') icon = '📝';
                         else if (res.type === 'code') icon = '💻';
@@ -323,10 +321,7 @@ const app = {
                 return { x: (cx - rect.left - app.state.camera.x) / k, y: (cy - rect.top - app.state.camera.y) / k, rawX: cx, rawY: cy };
             };
 
-            // [新增] 画布 Drop 事件，支持将资源直接拖到节点上
-            canvas.addEventListener('dragover', (e) => {
-                e.preventDefault(); // 允许 drop
-            });
+            canvas.addEventListener('dragover', (e) => { e.preventDefault(); });
 
             canvas.addEventListener('drop', (e) => {
                 e.preventDefault();
@@ -334,7 +329,6 @@ const app = {
                 if (!resId) return;
 
                 const m = getPos(e);
-                // 查找放置位置下的节点
                 const hitNode = app.state.nodes.find(n => {
                     const r = n.type === 'root' ? app.config.nodeRadius : app.config.subRadius;
                     return Math.hypot(m.x - n.x, m.y - n.y) < r;
@@ -435,7 +429,6 @@ const app = {
             app.storage.forceSave();
         },
 
-        // [新增] 文件夹重命名
         renameFolder: function(id) {
             const folder = app.state.resources.find(r => r.id === id);
             if (!folder) return;
@@ -621,15 +614,15 @@ const app = {
             app.state.draggedResId = null;
         },
 
-        showTooltip: function(node, x, y) {
+        // --- 核心：通用预览显示逻辑 ---
+        displayTooltip: function(resId, x, y) {
             clearTimeout(app.state.tooltipTimer);
-            const res = app.state.resources.find(r => r.id === node.resId);
+            const res = app.state.resources.find(r => r.id === resId);
             if (!res) return;
 
             let content = '';
             if (res.type === 'image') content = `<img src="${res.content}" style="max-width:100%; max-height:200px; display:block; border-radius:4px;">`;
             else if (res.type === 'md') {
-                // 使用 marked.parse 渲染 MD
                 const html = marked.parse(res.content);
                 content = `<div class="md-preview" style="background:#f8f9fa; padding:10px; border-radius:4px; max-height:280px; overflow-y:auto;">${html}</div>`;
             }
@@ -646,6 +639,16 @@ const app = {
             if (left + rect.width > window.innerWidth) left = x - rect.width - pad;
             if (top + rect.height > window.innerHeight) top = y - rect.height - pad;
             this.tooltipEl.style.top = top + 'px'; this.tooltipEl.style.left = left + 'px';
+        },
+
+        showTooltip: function(node, x, y) {
+            // 画布节点调用
+            if (node.resId) this.displayTooltip(node.resId, x, y);
+        },
+
+        showSidebarPreview: function(resId, event) {
+            // 侧边栏调用，位置稍微右偏，避免遮挡
+            this.displayTooltip(resId, event.clientX + 10, event.clientY);
         },
 
         hideTooltip: function() {
@@ -712,8 +715,13 @@ const app = {
             let icon = '🔗';
             if(r.type==='image') icon='🖼️'; else if(r.type==='md') icon='📝'; else if(r.type==='code') icon='💻'; else if(r.type==='color') icon='🎨'; else if(r.type==='audio') icon='🎤';
 
+            // [新增] 绑定 onmouseenter/onmouseleave 实现侧边栏预览
             return `
-                <div class="res-item" draggable="true" ondragstart="app.ui.dragStart(event, '${r.id}')">
+                <div class="res-item" 
+                     draggable="true" 
+                     ondragstart="app.ui.dragStart(event, '${r.id}')"
+                     onmouseenter="app.ui.showSidebarPreview('${r.id}', event)"
+                     onmouseleave="app.ui.hideTooltip()">
                     <div class="res-icon" onclick="app.ui.viewResource('${r.id}')">${icon}</div>
                     <div class="res-info" onclick="app.ui.viewResource('${r.id}')">
                         <div class="res-name">${r.name}</div>
