@@ -1,15 +1,15 @@
 /**
  * MindFlow - App Logic
- * 更新内容：优化悬浮预览延迟，支持文件夹重命名，修复节点编辑器不消失的问题
+ * 更新内容：支持从侧边栏拖拽资源到画布节点关联，支持色卡资源改变节点颜色
  */
 
 const app = {
     // --- 配置 ---
     config: {
-        appVersion: '1.5.0',
+        appVersion: '1.6.0',
         nodeRadius: 40, subRadius: 30, linkDistance: 150, chargeStrength: -800, collideRadius: 55,
         dbName: 'MindFlowDB', storeName: 'projects',
-        previewDelay: 50 // [修改] 缩短悬浮显示延迟，提升响应速度
+        previewDelay: 50
     },
 
     // --- 全局状态 ---
@@ -250,25 +250,31 @@ const app = {
 
             app.state.nodes.forEach(n => {
                 const r = n.type === 'root' ? app.config.nodeRadius : app.config.subRadius;
+
+                // [修改] 背景色逻辑：如果是色卡，直接应用颜色
+                let fillColor = 'white';
+                let hasImg = false;
+                const res = n.resId ? app.state.resources.find(r => r.id === n.resId) : null;
+
+                if (res && res.type === 'color') {
+                    fillColor = res.content;
+                }
+
                 ctx.shadowColor = 'rgba(0,0,0,0.1)'; ctx.shadowBlur = 10;
                 ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
-                ctx.fillStyle = 'white'; ctx.fill(); ctx.shadowBlur = 0;
+                ctx.fillStyle = fillColor; ctx.fill(); ctx.shadowBlur = 0;
 
-                let hasImg = false;
-                if (n.resId) {
-                    const res = app.state.resources.find(r => r.id === n.resId);
-                    if (res) {
-                        if (res.type === 'image') {
-                            this.drawImageInNode(n, res, r); hasImg = true;
-                        } else {
-                            let icon = '🔗';
-                            if (res.type === 'md') icon = '📝';
-                            else if (res.type === 'code') icon = '💻';
-                            else if (res.type === 'color') icon = '🎨';
-                            else if (res.type === 'audio') icon = '🎤';
-                            ctx.font = '20px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-                            ctx.fillText(icon, n.x, n.y - 5);
-                        }
+                if (res) {
+                    if (res.type === 'image') {
+                        this.drawImageInNode(n, res, r); hasImg = true;
+                    } else if (res.type !== 'color') {
+                        // 非图片且非色卡，绘制图标
+                        let icon = '🔗';
+                        if (res.type === 'md') icon = '📝';
+                        else if (res.type === 'code') icon = '💻';
+                        else if (res.type === 'audio') icon = '🎤';
+                        ctx.font = '20px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                        ctx.fillText(icon, n.x, n.y - 5);
                     }
                 }
 
@@ -317,12 +323,34 @@ const app = {
                 return { x: (cx - rect.left - app.state.camera.x) / k, y: (cy - rect.top - app.state.camera.y) / k, rawX: cx, rawY: cy };
             };
 
+            // [新增] 画布 Drop 事件，支持将资源直接拖到节点上
+            canvas.addEventListener('dragover', (e) => {
+                e.preventDefault(); // 允许 drop
+            });
+
+            canvas.addEventListener('drop', (e) => {
+                e.preventDefault();
+                const resId = e.dataTransfer.getData('text/plain');
+                if (!resId) return;
+
+                const m = getPos(e);
+                // 查找放置位置下的节点
+                const hitNode = app.state.nodes.find(n => {
+                    const r = n.type === 'root' ? app.config.nodeRadius : app.config.subRadius;
+                    return Math.hypot(m.x - n.x, m.y - n.y) < r;
+                });
+
+                if (hitNode) {
+                    hitNode.resId = resId;
+                    app.ui.toast('资源已关联');
+                    app.storage.forceSave();
+                }
+            });
+
             const handleStart = (e) => {
-                // [修改] 点击画布空白处，强制关闭节点编辑器
                 const menu = document.getElementById('nodeMenu');
                 if (menu.style.display !== 'none') {
                     menu.style.display = 'none';
-                    // 不中断后续逻辑，因为可能是点击其他地方
                 }
 
                 if (e.target !== canvas) return;
