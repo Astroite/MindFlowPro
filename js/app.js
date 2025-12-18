@@ -1,6 +1,6 @@
 /**
  * MindFlow - App Logic
- * 更新内容：新增深色模式支持，新增侧边栏资源搜索功能
+ * 更新内容：UI视觉升级 - 谷歌 Material Design 风格节点渲染
  */
 
 const app = {
@@ -9,7 +9,17 @@ const app = {
         appVersion: '2.1.0',
         nodeRadius: 40, subRadius: 30, linkDistance: 150, chargeStrength: -800, collideRadius: 55,
         dbName: 'MindFlowDB', storeName: 'projects',
-        previewDelay: 50
+        previewDelay: 50,
+        // [新增] 视觉配置
+        colors: {
+            primary: '#6366f1',
+            surface: '#ffffff',
+            outline: '#e2e8f0',
+            textMain: '#1f2937',
+            textLight: '#ffffff',
+            selection: '#818cf8',
+            link: '#cbd5e1'
+        }
     },
 
     // --- 全局状态 ---
@@ -23,7 +33,7 @@ const app = {
         expandedFolders: new Set(),
         draggedResId: null,
         fileHandle: null,
-        searchKeyword: '' // [新增] 搜索关键词
+        searchKeyword: ''
     },
 
     // --- 模块 1: 存储 (Storage) ---
@@ -101,8 +111,8 @@ const app = {
 
                 document.getElementById('projTitleInput').value = proj.name;
                 app.graph.resetCamera(); app.graph.imageCache.clear();
-                app.state.searchKeyword = ''; // 重置搜索
-                document.querySelector('.search-input').value = '';
+                app.state.searchKeyword = '';
+                // document.querySelector('.search-input').value = ''; // 如果有搜索框
                 app.ui.renderResourceTree();
                 app.ui.toast(`已加载: ${proj.name}`);
                 app.graph.updateSimulation();
@@ -249,7 +259,10 @@ const app = {
         addRootNode: function() {
             if (!app.state.currentId) return app.ui.toast('请先新建项目');
             if (app.state.nodes.length > 0) return app.ui.toast('根节点已存在');
-            app.state.nodes.push({ id: 'n_' + Date.now(), type: 'root', x: 0, y: 0, label: '中心主题', scale: 0.1 });
+            app.state.nodes.push({
+                id: 'n_' + Date.now(), type: 'root', x: 0, y: 0, label: '中心主题',
+                scale: 0.1
+            });
             this.updateSimulation(); app.storage.forceSave();
         },
 
@@ -279,7 +292,10 @@ const app = {
             ctx.translate(cam.x, cam.y);
             ctx.scale(cam.k, cam.k);
 
-            ctx.beginPath(); ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 2;
+            // [修改] 连线：颜色更淡，更优雅
+            ctx.beginPath();
+            ctx.strokeStyle = app.config.colors.link; // 使用配置色
+            ctx.lineWidth = 1.5;
             app.state.links.forEach(l => {
                 const s = l.source, t = l.target;
                 if (s.x && t.x) { ctx.moveTo(s.x, s.y); ctx.lineTo(t.x, t.y); }
@@ -287,35 +303,77 @@ const app = {
             ctx.stroke();
 
             app.state.nodes.forEach(n => {
+                // 生长动画
                 if (typeof n.scale === 'undefined') n.scale = 1;
                 if (n.scale < 1) { n.scale += (1 - n.scale) * 0.15; if (n.scale > 0.99) n.scale = 1; }
 
                 const r = (n.type === 'root' ? app.config.nodeRadius : app.config.subRadius) * (n.scale || 1);
-                let fillColor = 'white'; let hasImg = false;
+
+                // [修改] 颜色与样式逻辑
+                let fillColor = app.config.colors.surface;
+                let textColor = app.config.colors.textMain;
+                let hasImg = false;
+
                 const res = n.resId ? app.state.resources.find(r => r.id === n.resId) : null;
-                if (res && res.type === 'color') { fillColor = res.content; }
 
-                ctx.shadowColor = 'rgba(0,0,0,0.1)'; ctx.shadowBlur = 10 * (n.scale || 1);
+                if (n.type === 'root') {
+                    fillColor = app.config.colors.primary;
+                    textColor = app.config.colors.textLight;
+                }
+
+                if (res && res.type === 'color') {
+                    fillColor = res.content;
+                    // 简单的亮度判断来决定文字颜色
+                    // 这里简化处理，直接用白色描边或阴影可能更好，或者不做反色
+                }
+
+                // [新增] 柔和的阴影 (Elevation)
+                ctx.shadowColor = 'rgba(0,0,0,0.08)';
+                ctx.shadowBlur = 12 * (n.scale || 1);
+                ctx.shadowOffsetY = 4 * (n.scale || 1);
+                ctx.shadowOffsetX = 0;
+
                 ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
-                ctx.fillStyle = fillColor; ctx.fill(); ctx.shadowBlur = 0;
+                ctx.fillStyle = fillColor; ctx.fill();
 
+                // 重置阴影，避免影响后续绘制
+                ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+
+                // [新增] 图片/图标绘制
                 if (res) {
                     if (res.type === 'image') { this.drawImageInNode(n, res, r); hasImg = true; }
                     else if (res.type !== 'color') {
                         let icon = '🔗';
                         if (res.type === 'md') icon = '📝'; else if (res.type === 'code') icon = '💻'; else if (res.type === 'audio') icon = '🎤';
-                        ctx.font = `${20 * (n.scale||1)}px Arial`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+
+                        // 根节点图标为白色，子节点为主题色或深色
+                        ctx.fillStyle = (n.type === 'root') ? 'rgba(255,255,255,0.9)' : '#f59e0b';
+                        ctx.font = `${20 * (n.scale||1)}px Arial`;
+                        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
                         ctx.fillText(icon, n.x, n.y - 5);
                     }
                 }
 
-                ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
-                ctx.lineWidth = 3 * (n.scale || 1);
-                ctx.strokeStyle = (app.state.selectedNode === n) ? '#e74c3c' : (n.type === 'root' ? '#2c3e50' : '#667eea');
-                ctx.stroke();
+                // [新增] 细微的描边 (仅子节点)
+                if (n.type !== 'root' && (!res || res.type !== 'color')) {
+                    ctx.lineWidth = 1.5;
+                    ctx.strokeStyle = app.config.colors.outline;
+                    ctx.stroke();
+                }
 
+                // [修改] 选中态：外部对焦环 (Focus Ring)
+                if (app.state.selectedNode === n) {
+                    ctx.beginPath();
+                    ctx.arc(n.x, n.y, r + 5, 0, Math.PI * 2);
+                    ctx.strokeStyle = app.config.colors.selection;
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                }
+
+                // [修改] 文字绘制
                 ctx.globalAlpha = n.scale || 1;
-                ctx.fillStyle = '#334155'; ctx.font = `bold ${12 * (n.scale||1)}px Arial`;
+                ctx.fillStyle = textColor;
+                ctx.font = `${n.type==='root'?'bold':''} ${12 * (n.scale||1)}px "Segoe UI", sans-serif`;
                 ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
                 const textY = hasImg ? n.y + r + 15 : (n.resId && !hasImg ? n.y + 15 : n.y);
                 ctx.fillText(n.label, n.x, textY);
@@ -699,12 +757,12 @@ const app = {
             if (res.type === 'image') content = `<img src="${res.content}" style="max-width:100%; max-height:200px; display:block; border-radius:4px;">`;
             else if (res.type === 'md') {
                 const html = marked.parse(res.content);
-                content = `<div class="md-preview" style="background:transparent; padding:4px;">${html}</div>`;
+                content = `<div class="md-preview" style="background:#f8f9fa; padding:10px; border-radius:4px; max-height:280px; overflow-y:auto;">${html}</div>`;
             }
             else if (res.type === 'code') content = `<pre style="font-family:monospace; background:#282c34; color:#abb2bf; padding:10px; border-radius:4px; font-size:12px; overflow:auto;">${this.escapeHtml(res.content)}</pre>`;
             else if (res.type === 'color') content = `<div style="width:100px; height:60px; background-color:${res.content}; border-radius:4px; border:1px solid #ddd; margin-bottom:5px;"></div><div style="text-align:center; font-family:monospace; font-weight:bold;">${res.content}</div>`;
             else if (res.type === 'audio') content = `<audio controls src="${res.content}" style="width:250px;"></audio>`;
-            else if (res.type === 'link') content = `<div style="font-size:12px; color:var(--text-sub); margin-bottom:8px; word-break:break-all;">${res.content}</div><a href="${res.content}" target="_blank" style="display:block; text-align:center; background:#667eea; color:white; text-decoration:none; padding:6px; border-radius:4px; font-size:12px;">跳转到链接 🔗</a>`;
+            else if (res.type === 'link') content = `<div style="font-size:12px; color:#555; margin-bottom:8px; word-break:break-all;">${res.content}</div><a href="${res.content}" target="_blank" style="display:block; text-align:center; background:#667eea; color:white; text-decoration:none; padding:6px; border-radius:4px; font-size:12px;">跳转到链接 🔗</a>`;
 
             this.tooltipEl.innerHTML = content;
             this.tooltipEl.style.display = 'block';
