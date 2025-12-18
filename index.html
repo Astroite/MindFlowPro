@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>MindFlow - 本地化视觉思维导图</title>
 
+    <!-- [修复 1] 引入 Manifest 配置，这是 PWA 安装的身份证 -->
+    <link rel="manifest" href="manifest.json">
+
     <link rel="stylesheet" href="css/style.css">
 
     <script src="js/lib/d3.v7.min.js"></script>
@@ -58,6 +61,8 @@
             <input type="text" id="projTitleInput" class="project-title-input" placeholder="未命名项目" onchange="app.data.renameProject(this.value)" title="点击重命名项目">
             <div class="divider"></div>
             <button class="tool-btn" onclick="app.storage.forceSave()" title="保存到浏览器数据库"><span>☁️ 保存</span></button>
+            <!-- [新增] 导出图片按钮 -->
+            <button class="tool-btn" onclick="app.ui.exportImage()" title="导出为图片"><span>📷 导出</span></button>
             <button class="tool-btn danger" onclick="app.graph.clearAll()" title="清空画布"><span>🗑️ 清空</span></button>
             <div class="divider"></div>
             <!-- [新增] 主题切换按钮 -->
@@ -73,7 +78,7 @@
     </div>
 </div>
 
-<!-- [修改] 独立气泡容器：不仅没有背景，而且作为定位基准点 -->
+<!-- 独立气泡容器：不仅没有背景，而且作为定位基准点 -->
 <div id="nodeBubble" class="node-bubble-container" style="display: none;">
     <!-- 编辑气泡 -->
     <button class="bubble-btn action-edit" onclick="app.ui.onBubbleEdit()" title="编辑节点">
@@ -85,7 +90,7 @@
     </button>
 </div>
 
-<!-- 弹窗/菜单保持原样 -->
+<!-- 弹窗/菜单 -->
 <div class="modal-overlay" id="resModal" style="display: none;">
     <div class="modal-box">
         <h3 id="resModalTitle">添加资源</h3>
@@ -109,7 +114,7 @@
     </div>
 </div>
 
-<!-- [修改] 现代化节点属性面板 -->
+<!-- 现代化节点属性面板 -->
 <div class="node-menu modern-panel" id="nodeMenu" style="display: none;">
     <div class="panel-header">
         <h3>✨ 编辑节点</h3>
@@ -147,6 +152,19 @@
     // [新增] 初始化主题
     if(localStorage.getItem('theme') === 'dark') {
         document.body.setAttribute('data-theme', 'dark');
+    }
+
+    // [修复 2] 注册 Service Worker，这是 PWA 离线运行和安装的关键
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+            navigator.serviceWorker.register('sw.js')
+                .then(registration => {
+                    console.log('SW Registered:', registration.scope);
+                })
+                .catch(err => {
+                    console.log('SW Registration Failed:', err);
+                });
+        });
     }
 </script>
 </body>

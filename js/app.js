@@ -1,13 +1,13 @@
 /**
  * MindFlow - App Logic
  * 更新内容：
- * 1. 修复气泡定位偏移问题 (加入 canvasRect 偏移量计算)
+ * 1. 新增 exportImage 功能：智能计算包围盒，导出高清 PNG
  */
 
 const app = {
     // --- 配置 ---
     config: {
-        appVersion: '2.5.5', // 版本号更新
+        appVersion: '2.6.0', // 版本号更新
         nodeRadius: 40, subRadius: 30, linkDistance: 150, chargeStrength: -300, collideRadius: 55,
         dbName: 'MindFlowDB', storeName: 'projects',
         previewDelay: 50,
@@ -860,6 +860,131 @@ const app = {
             });
         },
 
+        // [新增] 导出为高清图片功能
+        exportImage: function() {
+            if (app.state.nodes.length === 0) return this.toast('画布为空');
+
+            // 1. 计算包围盒
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            app.state.nodes.forEach(n => {
+                const r = (n.type === 'root' ? app.config.nodeRadius : app.config.subRadius) * (n.scale || 1);
+                if (n.x - r < minX) minX = n.x - r;
+                if (n.x + r > maxX) maxX = n.x + r;
+                if (n.y - r < minY) minY = n.y - r;
+                if (n.y + r > maxY) maxY = n.y + r;
+            });
+
+            const padding = 50;
+            const width = maxX - minX + padding * 2;
+            const height = maxY - minY + padding * 2;
+
+            // 2. 创建 Canvas
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+
+            // 3. 背景
+            const isDark = document.body.getAttribute('data-theme') === 'dark';
+            ctx.fillStyle = isDark ? '#18181b' : '#f3f3f3';
+            ctx.fillRect(0, 0, width, height);
+
+            ctx.save();
+            ctx.translate(-minX + padding, -minY + padding);
+
+            // 4. 绘制连线
+            ctx.beginPath();
+            ctx.strokeStyle = app.config.colors.link;
+            ctx.lineWidth = 1.5;
+            app.state.links.forEach(l => {
+                const s = l.source, t = l.target;
+                if (s.x && t.x) {
+                    ctx.moveTo(s.x, s.y);
+                    ctx.lineTo(t.x, t.y);
+                }
+            });
+            ctx.stroke();
+
+            // 5. 绘制节点
+            app.state.nodes.forEach(n => {
+                const r = (n.type === 'root' ? app.config.nodeRadius : app.config.subRadius) * (n.scale || 1);
+
+                // 阴影
+                ctx.save();
+                if (n.type === 'root') {
+                    ctx.shadowColor = 'rgba(0,0,0,0.2)';
+                    ctx.shadowBlur = 20;
+                    ctx.shadowOffsetY = 5;
+                }
+
+                ctx.beginPath();
+                ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+
+                let fillColor = n.type === 'root' ? app.config.colors.primary : app.config.colors.surface;
+                const res = n.resId ? app.state.resources.find(r => r.id === n.resId) : null;
+                if (res && res.type === 'color') fillColor = res.content;
+
+                ctx.fillStyle = fillColor;
+                ctx.fill();
+                ctx.restore();
+
+                // 图片绘制
+                if (res && res.type === 'image') {
+                    const img = app.graph.imageCache.get(res.id);
+                    if (img && img !== 'loading') {
+                        ctx.save();
+                        ctx.beginPath();
+                        ctx.arc(n.x, n.y, r - 2, 0, Math.PI * 2);
+                        ctx.clip();
+                        const scale = Math.max((r*2)/img.width, (r*2)/img.height);
+                        ctx.drawImage(img, n.x - img.width*scale/2, n.y - img.height*scale/2, img.width*scale, img.height*scale);
+                        ctx.restore();
+                    }
+                } else if (res && res.type !== 'color') {
+                    // 图标
+                    let icon = '🔗';
+                    if (res.type === 'md') icon = '📝';
+                    else if (res.type === 'code') icon = '💻';
+                    else if (res.type === 'audio') icon = '🎤';
+
+                    ctx.fillStyle = (n.type === 'root') ? 'rgba(255,255,255,0.9)' : '#f59e0b';
+                    ctx.font = `${20 * (n.scale||1)}px Arial`;
+                    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                    ctx.fillText(icon, n.x, n.y - 5);
+                }
+
+                // 边框
+                if (n.type === 'root') {
+                    if (!res || res.type !== 'color') {
+                        ctx.lineWidth = 2;
+                        ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+                        ctx.stroke();
+                    }
+                } else if (!res || res.type !== 'color') {
+                    ctx.lineWidth = 1.5;
+                    ctx.strokeStyle = app.config.colors.outline;
+                    ctx.stroke();
+                }
+
+                // 文字
+                ctx.fillStyle = (n.type === 'root') ? app.config.colors.textLight : app.config.colors.textMain;
+                ctx.font = `${n.type==='root'?'bold':''} ${12 * (n.scale||1)}px "Segoe UI", sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                const textY = (res && res.type === 'image') ? n.y + r + 15 : (n.resId && res.type !== 'image' && res.type !== 'color' ? n.y + 15 : n.y);
+                ctx.fillText(n.label, n.x, textY);
+            });
+
+            ctx.restore();
+
+            // 6. 导出
+            const link = document.createElement('a');
+            link.download = `MindFlow_${Date.now()}.png`;
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+            this.toast('图片已导出');
+        },
+
         toggleTheme: function() {
             const body = document.body;
             if (body.hasAttribute('data-theme')) {
@@ -916,7 +1041,7 @@ const app = {
             this.hideNodeBubble();
             // 复用 openNodeMenu，但现在它作为“现代化交互面板”
             // 计算面板位置（屏幕中央偏上，或者跟随鼠标，这里简单居中显示）
-            const cx = window.innerWidth / 2 - 160; // 320px width / 2
+            const cx = window.innerWidth / 2 - 160; // 300px width / 2
             const cy = window.innerHeight / 2 - 180;
             this.openNodeMenu(node, cx, cy);
         },
