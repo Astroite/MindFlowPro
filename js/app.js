@@ -1,12 +1,12 @@
 /**
  * MindFlow - App Logic
- * 更新内容：优化节点生成动画（丝滑生长），修复菜单滞留问题
+ * 更新内容：新增移动端双指缩放 (Pinch-to-Zoom) 支持
  */
 
 const app = {
     // --- 配置 ---
     config: {
-        appVersion: '1.9.0',
+        appVersion: '2.0.0',
         nodeRadius: 40, subRadius: 30, linkDistance: 150, chargeStrength: -800, collideRadius: 55,
         dbName: 'MindFlowDB', storeName: 'projects',
         previewDelay: 50
@@ -94,7 +94,6 @@ const app = {
 
                 app.state.currentId = id;
                 app.state.fileHandle = null;
-                // 加载时直接设为完全体(scale=1)，不需要生长动画
                 app.state.nodes = (proj.nodes || []).map(n => ({...n, scale: 1}));
                 app.state.links = JSON.parse(JSON.stringify(proj.links || []));
                 app.state.resources = (proj.resources || []).map(r => ({ ...r, parentId: r.parentId || null }));
@@ -207,7 +206,13 @@ const app = {
     // --- 模块 2: 图形与物理引擎 (Graph) ---
     graph: {
         canvas: null, ctx: null, width: 0, height: 0,
-        imageCache: new Map(), dragSubject: null, isPanning: false, startPan: {x:0, y:0},
+        imageCache: new Map(),
+        dragSubject: null,
+        isPanning: false,
+        startPan: {x:0, y:0},
+        // [新增] 双指缩放状态
+        pinchStartDist: null,
+        pinchStartScale: 1,
 
         init: function() {
             this.canvas = document.getElementById('mainCanvas');
@@ -246,11 +251,7 @@ const app = {
         addRootNode: function() {
             if (!app.state.currentId) return app.ui.toast('请先新建项目');
             if (app.state.nodes.length > 0) return app.ui.toast('根节点已存在');
-
-            app.state.nodes.push({
-                id: 'n_' + Date.now(), type: 'root', x: 0, y: 0, label: '中心主题',
-                scale: 0.1
-            });
+            app.state.nodes.push({ id: 'n_' + Date.now(), type: 'root', x: 0, y: 0, label: '中心主题', scale: 0.1 });
             this.updateSimulation(); app.storage.forceSave();
         },
 
@@ -258,17 +259,12 @@ const app = {
             const angle = Math.random() * Math.PI * 2;
             const node = {
                 id: 'n_' + Date.now(), type: 'sub',
-                // [优化1] 初始位置：从父节点中心往外延伸一点点，而不是完全重叠
-                // 这样物理引擎会有明确的推斥方向，而不是随机炸裂
-                x: parent.x + Math.cos(angle) * 10,
-                y: parent.y + Math.sin(angle) * 10,
-                label: '新节点',
-                scale: 0.05 // [优化2] 初始尺寸极小，几乎不可见
+                x: parent.x + Math.cos(angle) * 10, y: parent.y + Math.sin(angle) * 10,
+                label: '新节点', scale: 0.05
             };
             app.state.nodes.push(node);
-            app.state.links.push({ source: parent.id, target: node.id });
-            this.updateSimulation();
-            app.storage.forceSave();
+            app.state.links.push({ source: parent.id, target: app.state.nodes[app.state.nodes.length-1].id });
+            this.updateSimulation(); app.storage.forceSave();
         },
 
         clearAll: function() {
@@ -293,20 +289,12 @@ const app = {
             ctx.stroke();
 
             app.state.nodes.forEach(n => {
-                // [优化3] 极度平滑的生长曲线 (Ease-out effect)
-                // 之前是线性的 0.05，现在这种算法会让它开始快、结尾慢，显得更有质感
                 if (typeof n.scale === 'undefined') n.scale = 1;
-                if (n.scale < 1) {
-                    n.scale += (1 - n.scale) * 0.15; // 每次增加剩余差距的15%
-                    if (n.scale > 0.99) n.scale = 1; // 阈值锁定
-                }
+                if (n.scale < 1) { n.scale += (1 - n.scale) * 0.15; if (n.scale > 0.99) n.scale = 1; }
 
                 const r = (n.type === 'root' ? app.config.nodeRadius : app.config.subRadius) * (n.scale || 1);
-
-                let fillColor = 'white';
-                let hasImg = false;
+                let fillColor = 'white'; let hasImg = false;
                 const res = n.resId ? app.state.resources.find(r => r.id === n.resId) : null;
-
                 if (res && res.type === 'color') { fillColor = res.content; }
 
                 ctx.shadowColor = 'rgba(0,0,0,0.1)'; ctx.shadowBlur = 10 * (n.scale || 1);
@@ -314,15 +302,11 @@ const app = {
                 ctx.fillStyle = fillColor; ctx.fill(); ctx.shadowBlur = 0;
 
                 if (res) {
-                    if (res.type === 'image') {
-                        this.drawImageInNode(n, res, r); hasImg = true;
-                    } else if (res.type !== 'color') {
+                    if (res.type === 'image') { this.drawImageInNode(n, res, r); hasImg = true; }
+                    else if (res.type !== 'color') {
                         let icon = '🔗';
-                        if (res.type === 'md') icon = '📝';
-                        else if (res.type === 'code') icon = '💻';
-                        else if (res.type === 'audio') icon = '🎤';
-                        ctx.font = `${20 * (n.scale||1)}px Arial`;
-                        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                        if (res.type === 'md') icon = '📝'; else if (res.type === 'code') icon = '💻'; else if (res.type === 'audio') icon = '🎤';
+                        ctx.font = `${20 * (n.scale||1)}px Arial`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
                         ctx.fillText(icon, n.x, n.y - 5);
                     }
                 }
@@ -377,34 +361,28 @@ const app = {
             };
 
             canvas.addEventListener('dragover', (e) => { e.preventDefault(); });
-
             canvas.addEventListener('drop', (e) => {
-                e.preventDefault();
-                const resId = e.dataTransfer.getData('text/plain');
-                if (!resId) return;
-
+                e.preventDefault(); const resId = e.dataTransfer.getData('text/plain'); if (!resId) return;
                 const m = getPos(e);
-                const hitNode = app.state.nodes.find(n => {
-                    const r = n.type === 'root' ? app.config.nodeRadius : app.config.subRadius;
-                    return Math.hypot(m.x - n.x, m.y - n.y) < r;
-                });
-
-                if (hitNode) {
-                    hitNode.resId = resId;
-                    app.ui.toast('资源已关联');
-                    app.storage.forceSave();
-                }
+                const hitNode = app.state.nodes.find(n => Math.hypot(m.x - n.x, m.y - n.y) < (n.type==='root'?app.config.nodeRadius:app.config.subRadius));
+                if (hitNode) { hitNode.resId = resId; app.ui.toast('资源已关联'); app.storage.forceSave(); }
             });
 
             const handleStart = (e) => {
-                // [优化] 点击/触摸画布任意位置时，强制隐藏菜单
-                // 这样当你操作节点或拖拽画布时，菜单就会自动消失
                 const menu = document.getElementById('nodeMenu');
-                if (menu.style.display !== 'none') {
-                    menu.style.display = 'none';
+                if (menu.style.display !== 'none') menu.style.display = 'none';
+                if (e.target !== canvas) return;
+
+                // [修改] 双指缩放检测
+                if (e.touches && e.touches.length === 2) {
+                    const dx = e.touches[0].clientX - e.touches[1].clientX;
+                    const dy = e.touches[0].clientY - e.touches[1].clientY;
+                    this.pinchStartDist = Math.hypot(dx, dy);
+                    this.pinchStartScale = app.state.camera.k;
+                    e.preventDefault();
+                    return;
                 }
 
-                if (e.target !== canvas) return;
                 const m = getPos(e);
                 let hitNode = null;
                 for (let i = app.state.nodes.length - 1; i >= 0; i--) {
@@ -422,6 +400,21 @@ const app = {
             };
 
             const handleMove = (e) => {
+                // [修改] 双指缩放逻辑
+                if (e.touches && e.touches.length === 2 && this.pinchStartDist) {
+                    const dx = e.touches[0].clientX - e.touches[1].clientX;
+                    const dy = e.touches[0].clientY - e.touches[1].clientY;
+                    const dist = Math.hypot(dx, dy);
+                    const scaleFactor = dist / this.pinchStartDist;
+
+                    let newScale = this.pinchStartScale * scaleFactor;
+                    newScale = Math.max(0.1, Math.min(5, newScale)); // 限制缩放范围
+                    app.state.camera.k = newScale;
+
+                    e.preventDefault();
+                    return;
+                }
+
                 if (!e.touches) {
                     const m = getPos(e);
                     let hoverNode = null;
@@ -443,7 +436,12 @@ const app = {
                 }
             };
 
-            const handleEnd = () => {
+            const handleEnd = (e) => {
+                // 如果手指抬起后不足2指，重置 pinch 状态
+                if (e.touches && e.touches.length < 2) {
+                    this.pinchStartDist = null;
+                }
+
                 if (this.dragSubject) {
                     this.dragSubject.fx = null; this.dragSubject.fy = null;
                     app.state.simulation.alphaTarget(0); this.dragSubject = null;
@@ -458,7 +456,6 @@ const app = {
             canvas.addEventListener('touchmove', handleMove, {passive: false});
             window.addEventListener('touchend', handleEnd);
             canvas.addEventListener('wheel', (e) => {
-                // [优化] 滚轮缩放时也隐藏菜单
                 document.getElementById('nodeMenu').style.display = 'none';
                 e.preventDefault(); const f = e.deltaY < 0 ? 1.1 : 0.9;
                 app.state.camera.k = Math.max(0.1, Math.min(5, app.state.camera.k * f));
@@ -605,7 +602,7 @@ const app = {
             if (window.showOpenFilePicker) {
                 app.storage.openFileHandle();
             } else {
-                app.ui.triggerImport(); // 回退
+                app.ui.triggerImport();
             }
         },
 
@@ -613,7 +610,7 @@ const app = {
             if (window.showSaveFilePicker) {
                 app.storage.saveToHandle();
             } else {
-                app.storage.exportProjectToFile(); // 回退
+                app.storage.exportProjectToFile();
             }
         },
 
