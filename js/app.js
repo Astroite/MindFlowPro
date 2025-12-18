@@ -1,16 +1,15 @@
 /**
  * MindFlow - App Logic
- * 更新内容：物理引擎调优，为根节点增加“重量感”（通过增强排斥力和碰撞体积实现）
+ * 更新内容：修复孤儿节点升级后尺寸过大问题，增加 Delete/Backspace 快捷键删除节点
  */
 
 const app = {
     // --- 配置 ---
     config: {
-        appVersion: '2.3.0',
+        appVersion: '2.5.0',
         nodeRadius: 40, subRadius: 30, linkDistance: 150, chargeStrength: -300, collideRadius: 55,
         dbName: 'MindFlowDB', storeName: 'projects',
         previewDelay: 50,
-        // 视觉配置
         colors: {
             primary: '#6366f1',
             surface: '#ffffff',
@@ -28,7 +27,14 @@ const app = {
         projectsIndex: [],
         nodes: [], links: [], resources: [],
         camera: { x: 0, y: 0, k: 1 },
-        simulation: null, selectedNode: null, tempFileBase64: null, hoverNode: null, tooltipTimer: null,
+        simulation: null,
+
+        // [修改] 升级为多选集合 Set<NodeId>
+        selectedNodes: new Set(),
+        // [新增] 专门记录当前正在编辑（双击打开菜单）的节点，与选中态解耦
+        editingNode: null,
+
+        tempFileBase64: null, hoverNode: null, tooltipTimer: null,
         editingResId: null,
         expandedFolders: new Set(),
         draggedResId: null,
@@ -89,6 +95,7 @@ const app = {
                     app.state.currentId = null;
                     app.state.nodes = []; app.state.links = []; app.state.resources = [];
                     app.state.fileHandle = null;
+                    app.state.selectedNodes.clear();
                     app.graph.updateSimulation();
                     app.ui.renderResourceTree();
                     document.getElementById('projTitleInput').value = '';
@@ -109,6 +116,7 @@ const app = {
                 app.state.links = JSON.parse(JSON.stringify(proj.links || []));
                 app.state.resources = (proj.resources || []).map(r => ({ ...r, parentId: r.parentId || null }));
 
+                app.state.selectedNodes.clear(); // 清空选中
                 document.getElementById('projTitleInput').value = proj.name;
                 app.graph.resetCamera(); app.graph.imageCache.clear();
                 app.state.searchKeyword = '';
@@ -229,16 +237,10 @@ const app = {
 
             app.state.simulation = d3.forceSimulation()
                 .force("link", d3.forceLink().id(d => d.id).distance(app.config.linkDistance))
-
-                // [修改] 物理引擎调优：差异化排斥力
-                // 根节点 Charge 为 -240 (是普通节点的3倍)，形成强大的“领域”
-                // 普通节点 Charge 为 -80
+                // Charge 力度，根节点更重
                 .force("charge", d3.forceManyBody().strength(d => d.type === 'root' ? app.config.chargeStrength * 3 : app.config.chargeStrength))
-
-                // [修改] 物理引擎调优：差异化碰撞体积
-                // 根节点占据更大的物理空间，防止被挤压
+                // 碰撞体积，根节点更大
                 .force("collide", d3.forceCollide().radius(d => d.type === 'root' ? app.config.collideRadius * 1.5 : app.config.collideRadius))
-
                 .force("x", d3.forceX(0).strength(0.01))
                 .force("y", d3.forceY(0).strength(0.01))
                 .on("tick", () => {});
@@ -271,14 +273,20 @@ const app = {
             const cx = (this.width / 2 - cam.x) / cam.k;
             const cy = (this.height / 2 - cam.y) / cam.k;
 
-            app.state.nodes.push({
+            const node = {
                 id: 'n_' + Date.now(),
                 type: 'root',
                 x: cx + (Math.random() - 0.5) * 50,
                 y: cy + (Math.random() - 0.5) * 50,
                 label: '新主题',
                 scale: 0.1
-            });
+            };
+            app.state.nodes.push(node);
+
+            // 新建节点自动选中
+            app.state.selectedNodes.clear();
+            app.state.selectedNodes.add(node.id);
+
             this.updateSimulation(); app.storage.forceSave();
             app.ui.toast('已添加新主题节点');
         },
@@ -291,13 +299,19 @@ const app = {
                 label: '新节点', scale: 0.05
             };
             app.state.nodes.push(node);
-            app.state.links.push({ source: parent.id, target: app.state.nodes[app.state.nodes.length-1].id });
+            app.state.links.push({ source: parent.id, target: node.id });
+
+            // 新增子节点自动选中
+            app.state.selectedNodes.clear();
+            app.state.selectedNodes.add(node.id);
+
             this.updateSimulation(); app.storage.forceSave();
         },
 
         clearAll: function() {
             if(confirm('确定清空画布吗？')) {
                 app.state.nodes = []; app.state.links = [];
+                app.state.selectedNodes.clear();
                 this.updateSimulation(); app.storage.forceSave();
             }
         },
@@ -373,7 +387,8 @@ const app = {
                     ctx.lineWidth = 1.5; ctx.strokeStyle = app.config.colors.outline; ctx.stroke();
                 }
 
-                if (app.state.selectedNode === n) {
+                // [修改] 多选渲染：检查 Set 集合
+                if (app.state.selectedNodes.has(n.id)) {
                     ctx.beginPath(); ctx.arc(n.x, n.y, r + 5, 0, Math.PI * 2);
                     ctx.strokeStyle = app.config.colors.selection; ctx.lineWidth = 2; ctx.stroke();
                 }
@@ -431,6 +446,18 @@ const app = {
                 if (hitNode) { hitNode.resId = resId; app.ui.toast('资源已关联'); app.storage.forceSave(); }
             });
 
+            // [新增] 键盘事件监听
+            window.addEventListener('keydown', (e) => {
+                if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
+
+                // 删除快捷键
+                if (e.key === 'Delete' || e.key === 'Backspace') {
+                    if (app.state.selectedNodes.size > 0) {
+                        app.data.deleteNode();
+                    }
+                }
+            });
+
             const handleStart = (e) => {
                 const menu = document.getElementById('nodeMenu');
                 if (menu.style.display !== 'none') menu.style.display = 'none';
@@ -452,11 +479,39 @@ const app = {
                     if (Math.hypot(m.x - (n.x + r*0.707), m.y - (n.y + r*0.707)) < 15) { this.addChildNode(n); return; }
                     if (Math.hypot(m.x - n.x, m.y - n.y) < r) { hitNode = n; break; }
                 }
+
+                // [修改] 选择逻辑：Ctrl/Meta 实现多选
                 if (hitNode) {
-                    this.dragSubject = hitNode; hitNode.fx = hitNode.x; hitNode.fy = hitNode.y;
-                    app.state.simulation.alphaTarget(0.3).restart(); app.state.selectedNode = hitNode;
+                    if (e.ctrlKey || e.metaKey) {
+                        // Toggle 选中
+                        if (app.state.selectedNodes.has(hitNode.id)) {
+                            app.state.selectedNodes.delete(hitNode.id);
+                            this.dragSubject = null; // 取消选中时不拖拽
+                        } else {
+                            app.state.selectedNodes.add(hitNode.id);
+                            this.dragSubject = hitNode; // 开始拖拽
+                        }
+                    } else {
+                        // 单选：如果点的不是已选中的节点之一，清空其他
+                        if (!app.state.selectedNodes.has(hitNode.id)) {
+                            app.state.selectedNodes.clear();
+                            app.state.selectedNodes.add(hitNode.id);
+                        }
+                        this.dragSubject = hitNode; // 开始拖拽
+                    }
+
+                    // 拖拽初始化
+                    if (this.dragSubject) {
+                        this.dragSubject.fx = this.dragSubject.x;
+                        this.dragSubject.fy = this.dragSubject.y;
+                        app.state.simulation.alphaTarget(0.3).restart();
+                    }
                 } else {
-                    this.isPanning = true; this.startPan = { x: m.rawX, y: m.rawY }; app.state.selectedNode = null;
+                    // 点击空白处清空选中
+                    if (!e.ctrlKey && !e.metaKey) {
+                        app.state.selectedNodes.clear();
+                    }
+                    this.isPanning = true; this.startPan = { x: m.rawX, y: m.rawY };
                 }
             };
 
@@ -484,7 +539,11 @@ const app = {
                 if (!this.dragSubject && !this.isPanning) return;
                 e.preventDefault();
                 const m = getPos(e);
-                if (this.dragSubject) { this.dragSubject.fx = m.x; this.dragSubject.fy = m.y; }
+                if (this.dragSubject) {
+                    this.dragSubject.fx = m.x; this.dragSubject.fy = m.y;
+                    // 这里可以扩展：如果是多选，其他选中的节点也应该跟着一起动（偏移量相同）
+                    // 暂时只支持拖拽当前抓取的节点
+                }
                 else if (this.isPanning) {
                     app.state.camera.x += m.rawX - this.startPan.x; app.state.camera.y += m.rawY - this.startPan.y;
                     this.startPan = { x: m.rawX, y: m.rawY };
@@ -514,7 +573,12 @@ const app = {
             canvas.addEventListener('dblclick', (e) => {
                 const m = getPos(e);
                 const hit = app.state.nodes.find(n => Math.hypot(m.x - n.x, m.y - n.y) < (n.type==='root'?40:30));
-                if (hit) app.ui.openNodeMenu(hit, e.clientX, e.clientY);
+                // [修改] 双击时，为了避免歧义，只选中当前这个节点，并打开菜单
+                if (hit) {
+                    app.state.selectedNodes.clear();
+                    app.state.selectedNodes.add(hit.id);
+                    app.ui.openNodeMenu(hit, e.clientX, e.clientY);
+                }
             });
         }
     },
@@ -625,27 +689,81 @@ const app = {
         },
 
         saveNodeEdit: function() {
-            if (app.state.selectedNode) {
-                app.state.selectedNode.label = document.getElementById('nodeLabel').value;
-                app.state.selectedNode.resId = document.getElementById('nodeResSelect').value || null;
+            // [修改] 编辑使用的是 editingNode
+            const node = app.state.editingNode;
+            if (node) {
+                node.label = document.getElementById('nodeLabel').value;
+                node.resId = document.getElementById('nodeResSelect').value || null;
                 app.storage.forceSave(); document.getElementById('nodeMenu').style.display = 'none';
             }
         },
 
         deleteNode: function() {
-            const node = app.state.selectedNode;
-            if (!node) return;
-            let toDel = new Set([node.id]); let changed = true;
-            while(changed) {
-                changed = false;
-                app.state.links.forEach(l => {
-                    const s = l.source.id||l.source; const t = l.target.id||l.target;
-                    if(toDel.has(s) && !toDel.has(t)) { toDel.add(t); changed = true; }
-                });
+            // [修改] 批量删除选中的所有节点，或当前编辑的节点
+            let nodesToDelete = Array.from(app.state.selectedNodes);
+            if (app.state.editingNode && nodesToDelete.indexOf(app.state.editingNode.id) === -1) {
+                // 如果当前在菜单里操作的节点不在选中列表里（通常双击会选中，所以不太可能），把它加进去
+                nodesToDelete = [app.state.editingNode.id];
             }
-            app.state.nodes = app.state.nodes.filter(n => !toDel.has(n.id));
-            app.state.links = app.state.links.filter(l => !toDel.has(l.source.id||l.source) && !toDel.has(l.target.id||l.target));
-            app.graph.updateSimulation(); app.storage.forceSave();
+
+            if (nodesToDelete.length === 0) return;
+
+            // 1. 过滤掉要删除的节点
+            app.state.nodes = app.state.nodes.filter(n => !nodesToDelete.includes(n.id));
+
+            // 2. 处理连线 & 孤儿升级
+            // 找出所有连接到已删除节点的连线
+            const deadNodeSet = new Set(nodesToDelete);
+
+            // 记录哪些幸存节点是被删除节点的子节点（Target）
+            // 我们的连线方向是 Parent -> Child
+            // 如果 Link.source 在 deadNodeSet 中，且 Link.target 不在 deadNodeSet 中，
+            // 那么 Link.target 就是一个“孤儿”，需要升级为 Root。
+
+            // 先遍历当前所有 Links
+            const survivingLinks = [];
+            const potentialOrphans = new Set();
+
+            app.state.links.forEach(l => {
+                const sId = l.source.id || l.source;
+                const tId = l.target.id || l.target;
+
+                const sourceIsDead = deadNodeSet.has(sId);
+                const targetIsDead = deadNodeSet.has(tId);
+
+                if (sourceIsDead && !targetIsDead) {
+                    // 父死子活 -> 子变孤儿
+                    potentialOrphans.add(tId);
+                } else if (!sourceIsDead && targetIsDead) {
+                    // 父活子死 -> 正常断开，父节点不受影响
+                } else if (sourceIsDead && targetIsDead) {
+                    // 都死 -> 连线消失
+                } else {
+                    // 都活 -> 保留连线
+                    survivingLinks.push(l);
+                }
+            });
+
+            app.state.links = survivingLinks;
+
+            // 3. 处理孤儿升级
+            // 检查潜在孤儿是否还有其他父节点（目前逻辑是单父，但为了健壮性检查一下入度）
+            // 简单处理：只要失去了一条来自父节点的连线，且它本身是 sub，就检查它现在还有没有入边
+            potentialOrphans.forEach(orphanId => {
+                const hasIncoming = app.state.links.some(l => (l.target.id || l.target) === orphanId);
+                if (!hasIncoming) {
+                    const orphan = app.state.nodes.find(n => n.id === orphanId);
+                    if (orphan) {
+                        orphan.type = 'root'; // 升级为根节点
+                        orphan.scale = 1; // [修复] 修正大小为标准根节点大小 (原为 1.2)
+                    }
+                }
+            });
+
+            app.state.selectedNodes.clear();
+            app.state.editingNode = null;
+            app.graph.updateSimulation();
+            app.storage.forceSave();
             document.getElementById('nodeMenu').style.display = 'none';
         },
 
@@ -950,8 +1068,11 @@ const app = {
         openModal: function() { this.openResModal('New'); },
         closeModal: function(id) { document.getElementById(id).style.display='none'; },
 
+        // [修改] 打开节点菜单时，设置 editingNode
         openNodeMenu: function(node, x, y) {
-            const m = document.getElementById('nodeMenu'); app.state.selectedNode = node;
+            const m = document.getElementById('nodeMenu');
+            app.state.editingNode = node; // 记录当前正在编辑的节点
+
             document.getElementById('nodeLabel').value = node.label;
             const sel = document.getElementById('nodeResSelect');
             sel.innerHTML = '<option value="">(无)</option>' + app.state.resources.filter(r=>r.type!=='folder').map(r =>
