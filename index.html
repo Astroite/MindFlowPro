@@ -26,8 +26,9 @@
                     <option value="" disabled selected>正在加载...</option>
                 </select>
                 <div class="btn-group-mini">
-                    <button class="btn-icon" title="导出到本地磁盘" onclick="app.data.exportProjectToFile()">💾</button>
-                    <button class="btn-icon" title="从磁盘打开项目" onclick="app.ui.triggerImport()">📂</button>
+                    <!-- [修改] 使用新的 API 触发方法 -->
+                    <button class="btn-icon" title="保存/导出到磁盘" onclick="app.data.triggerSaveDisk()">💾</button>
+                    <button class="btn-icon" title="从磁盘打开项目" onclick="app.data.triggerOpenDisk()">📂</button>
                     <button class="btn-icon danger" title="删除当前项目" onclick="app.ui.confirmDeleteProject()">🗑️</button>
                 </div>
             </div>

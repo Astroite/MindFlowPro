@@ -1,12 +1,12 @@
 /**
  * MindFlow - App Logic
- * 更新内容：修复侧边栏资源无法预览的问题，重构 Tooltip 逻辑以支持全局预览
+ * 更新内容：集成 File System Access API，支持直接读写本地磁盘文件
  */
 
 const app = {
     // --- 配置 ---
     config: {
-        appVersion: '1.6.1',
+        appVersion: '1.7.0',
         nodeRadius: 40, subRadius: 30, linkDistance: 150, chargeStrength: -800, collideRadius: 55,
         dbName: 'MindFlowDB', storeName: 'projects',
         previewDelay: 50
@@ -21,7 +21,9 @@ const app = {
         simulation: null, selectedNode: null, tempFileBase64: null, hoverNode: null, tooltipTimer: null,
         editingResId: null,
         expandedFolders: new Set(),
-        draggedResId: null
+        draggedResId: null,
+        // [新增] 本地文件句柄，用于直接读写磁盘
+        fileHandle: null
     },
 
     // --- 模块 1: 存储 (Storage) ---
@@ -50,6 +52,8 @@ const app = {
             await localforage.setItem(id, newProj);
             app.state.projectsIndex.push({ id: id, name: name });
             await this.saveIndex();
+            // 新建项目时清空文件句柄
+            app.state.fileHandle = null;
             return id;
         },
 
@@ -75,6 +79,7 @@ const app = {
                 if (app.state.currentId === id) {
                     app.state.currentId = null;
                     app.state.nodes = []; app.state.links = []; app.state.resources = [];
+                    app.state.fileHandle = null; // 清空句柄
                     app.graph.updateSimulation();
                     app.ui.renderResourceTree();
                     document.getElementById('projTitleInput').value = '';
@@ -90,6 +95,7 @@ const app = {
                 if (!proj) throw new Error('项目不存在');
 
                 app.state.currentId = id;
+                app.state.fileHandle = null; // 切换项目时重置句柄，除非是从文件打开的
                 app.state.nodes = JSON.parse(JSON.stringify(proj.nodes || []));
                 app.state.links = JSON.parse(JSON.stringify(proj.links || []));
                 app.state.resources = (proj.resources || []).map(r => ({ ...r, parentId: r.parentId || null }));
@@ -115,7 +121,7 @@ const app = {
             };
             try {
                 await localforage.setItem(app.state.currentId, projData);
-                app.ui.toast('保存成功');
+                app.ui.toast('保存成功 (浏览器数据库)');
                 document.getElementById('saveStatus').innerText = '已保存 ' + new Date().toLocaleTimeString();
             } catch (e) { console.error(e); app.ui.toast('保存失败 (可能文件过大)'); }
         },
@@ -133,8 +139,47 @@ const app = {
             return newId;
         },
 
-        exportProjectToFile: function() {
-            if (!app.state.currentId) return app.ui.toast('请先选择项目');
+        // --- File System Access API ---
+
+        // 打开本地文件 (带句柄)
+        openFileHandle: async function() {
+            try {
+                // 1. 获取文件句柄
+                const [handle] = await window.showOpenFilePicker({
+                    types: [{ description: 'MindFlow Files', accept: { 'application/json': ['.json', '.mindflow'] } }],
+                    multiple: false
+                });
+
+                // 2. 读取文件
+                const file = await handle.getFile();
+                const text = await file.text();
+                const json = JSON.parse(text);
+
+                if (!json.project) throw new Error('格式无效');
+
+                // 3. 导入数据
+                const newId = await this.importExternalProject(json.project);
+                await this.loadProject(newId);
+
+                // 4. 保存句柄到状态 (关键)
+                app.state.fileHandle = handle;
+
+                // 5. 更新 UI 提示
+                app.ui.toast('已打开本地文件 (支持直接保存)');
+                document.getElementById('projTitleInput').value = file.name.replace('.json', '').replace('.mindflow', '');
+
+            } catch (err) {
+                if (err.name !== 'AbortError') {
+                    console.error(err);
+                    app.ui.toast('打开文件失败: ' + err.message);
+                }
+            }
+        },
+
+        // 保存到本地文件 (有句柄则直接写，无句柄则另存为)
+        saveToHandle: async function() {
+            if (!app.state.currentId) return app.ui.toast('无数据可保存');
+
             const currentProjName = document.getElementById('projTitleInput').value || '未命名项目';
             const exportData = {
                 meta: { version: app.config.appVersion, type: 'MindFlowProject', exportedAt: Date.now() },
@@ -146,28 +191,45 @@ const app = {
                 }
             };
             const blob = new Blob([JSON.stringify(exportData, null, 2)], {type: 'application/json'});
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a'); a.href = url;
-            const dateStr = new Date().toISOString().split('T')[0];
-            a.download = `${currentProjName.replace(/\s+/g, '_')}_${dateStr}.mindflow.json`;
-            document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
-            app.ui.toast('项目已导出');
+
+            try {
+                if (app.state.fileHandle) {
+                    // --- 场景 A: 已有句柄，直接写入 ---
+                    const writable = await app.state.fileHandle.createWritable();
+                    await writable.write(blob);
+                    await writable.close();
+                    app.ui.toast('已保存到磁盘文件');
+                } else {
+                    // --- 场景 B: 无句柄，另存为 ---
+                    // 尝试使用新 API 的“另存为”
+                    if (window.showSaveFilePicker) {
+                        const handle = await window.showSaveFilePicker({
+                            suggestedName: `${currentProjName}.mindflow.json`,
+                            types: [{ description: 'MindFlow Files', accept: { 'application/json': ['.json', '.mindflow'] } }]
+                        });
+                        const writable = await handle.createWritable();
+                        await writable.write(blob);
+                        await writable.close();
+                        app.state.fileHandle = handle; // 记住句柄，下次直接保存
+                        app.ui.toast('已另存为本地文件');
+                    } else {
+                        // --- 场景 C: 不支持新 API，回退到下载 ---
+                        this.fallbackDownload(blob, `${currentProjName}.mindflow.json`);
+                    }
+                }
+            } catch (err) {
+                if (err.name !== 'AbortError') {
+                    console.error(err);
+                    app.ui.toast('保存到磁盘失败');
+                }
+            }
         },
 
-        importProjectFromFile: function(file) {
-            if (!file) return;
-            const reader = new FileReader();
-            reader.onload = async (e) => {
-                try {
-                    const json = JSON.parse(e.target.result);
-                    if (!json.meta || !json.project) throw new Error('无效的文件格式');
-                    const newId = await app.storage.importExternalProject(json.project);
-                    await app.storage.loadProject(newId);
-                    app.ui.updateProjectSelect();
-                    app.ui.toast('项目导入成功');
-                } catch (err) { app.ui.toast('导入失败: ' + err.message); }
-            };
-            reader.readAsText(file);
+        fallbackDownload: function(blob, filename) {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a'); a.href = url; a.download = filename;
+            document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+            app.ui.toast('已导出 (传统模式)');
         }
     },
 
@@ -542,6 +604,24 @@ const app = {
             document.getElementById('nodeMenu').style.display = 'none';
         },
 
+        // --- 暴露文件系统接口给 HTML 按钮调用 ---
+        triggerOpenDisk: function() {
+            if (window.showOpenFilePicker) {
+                app.storage.openFileHandle();
+            } else {
+                app.ui.triggerImport(); // 回退到旧版
+            }
+        },
+
+        triggerSaveDisk: function() {
+            if (window.showSaveFilePicker) {
+                app.storage.saveToHandle();
+            } else {
+                app.storage.exportProjectToFile(); // 回退到旧版
+            }
+        },
+        // ------------------------------------
+
         importProjectFromFile: function(file) { app.storage.importProjectFromFile(file); },
         exportProjectToFile: function() { app.storage.exportProjectToFile(); }
     },
@@ -642,12 +722,10 @@ const app = {
         },
 
         showTooltip: function(node, x, y) {
-            // 画布节点调用
             if (node.resId) this.displayTooltip(node.resId, x, y);
         },
 
         showSidebarPreview: function(resId, event) {
-            // 侧边栏调用，位置稍微右偏，避免遮挡
             this.displayTooltip(resId, event.clientX + 10, event.clientY);
         },
 
