@@ -154,9 +154,18 @@
         document.body.setAttribute('data-theme', 'dark');
     }
 
-    // [修复 2] 注册 Service Worker，这是 PWA 离线运行和安装的关键
+    // [修复 2] 注册 Service Worker & 自动刷新逻辑
     if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
+            let refreshing = false;
+
+            // 监听 controllerchange 事件：当新的 SW 接管页面时触发
+            navigator.serviceWorker.addEventListener('controllerchange', () => {
+                if (refreshing) return;
+                refreshing = true;
+                window.location.reload(); // 强制刷新页面，载入新代码
+            });
+
             navigator.serviceWorker.register('sw.js')
                 .then(registration => {
                     console.log('SW Registered:', registration.scope);

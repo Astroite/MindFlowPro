@@ -1,4 +1,7 @@
-const CACHE_NAME = 'mindflow-v1.7';
+// [重要] 每次修改了代码想要发布给用户，必须修改这里的版本号！
+// 比如改为 'mindflow-v1.2', 'mindflow-v1.3' 等
+// [本次更新] 提升版本号，确保浏览器识别到变化
+const CACHE_NAME = 'mindflow-v2.6.0';
 
 const ASSETS_TO_CACHE = [
     './',
@@ -14,6 +17,9 @@ const ASSETS_TO_CACHE = [
 
 // 安装 SW
 self.addEventListener('install', (event) => {
+    // [新增] skipWaiting: 让新 SW 安装后立即进入 activating 状态，不等待旧 SW 关闭
+    self.skipWaiting();
+
     event.waitUntil(
         caches.open(CACHE_NAME)
             .then((cache) => {
@@ -28,32 +34,28 @@ self.addEventListener('install', (event) => {
 self.addEventListener('fetch', (event) => {
     event.respondWith(
         // 策略 A: 缓存优先 (Cache First) - 适合生产环境，速度快，离线可用
-        // 逻辑：先找缓存，没有再联网
         caches.match(event.request).then((response) => {
             return response || fetch(event.request);
         })
-
-        // 策略 B: 网络优先 (Network First) - 适合开发调试
-        // 逻辑：先联网，联网失败(离线)再找缓存。
-        // 如果你想在开发时每次刷新都看到最新代码，请注释掉上面的 策略A，解开下面的 策略B
-        // fetch(event.request).catch(() => {
-        //     return caches.match(event.request);
-        // })
-
     );
 });
 
-// 清理旧缓存
+// 清理旧缓存 & 立即接管
 self.addEventListener('activate', (event) => {
     event.waitUntil(
-        caches.keys().then((keyList) => {
-            return Promise.all(keyList.map((key) => {
-                if (key !== CACHE_NAME) {
-                    console.log('[SW] Removing old cache:', key);
-                    return caches.delete(key);
-                }
-            }));
-        })
+        Promise.all([
+            // 1. 清理旧版本缓存
+            caches.keys().then((keyList) => {
+                return Promise.all(keyList.map((key) => {
+                    if (key !== CACHE_NAME) {
+                        console.log('[SW] Removing old cache:', key);
+                        return caches.delete(key);
+                    }
+                }));
+            }),
+            // 2. [新增] 立即接管所有页面控制权，不需等待刷新
+            self.clients.claim()
+        ])
     );
 });
 
