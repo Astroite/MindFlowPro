@@ -31,16 +31,16 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
         // 策略 A: 缓存优先 (Cache First) - 适合生产环境，速度快，离线可用
         // 逻辑：先找缓存，没有再联网
-        // caches.match(event.request).then((response) => {
-        //     return response || fetch(event.request);
-        // })
+        caches.match(event.request).then((response) => {
+            return response || fetch(event.request);
+        })
 
         // 策略 B: 网络优先 (Network First) - 适合开发调试
         // 逻辑：先联网，联网失败(离线)再找缓存。
         // 如果你想在开发时每次刷新都看到最新代码，请注释掉上面的 策略A，解开下面的 策略B
-        fetch(event.request).catch(() => {
-            return caches.match(event.request);
-        })
+        // fetch(event.request).catch(() => {
+        //     return caches.match(event.request);
+        // })
 
     );
 });
