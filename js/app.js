@@ -1,12 +1,12 @@
 /**
  * MindFlow - App Logic
- * 更新内容：集成 File System Access API，支持直接读写本地磁盘文件
+ * 更新内容：优化节点生成动画（丝滑生长），修复菜单滞留问题
  */
 
 const app = {
     // --- 配置 ---
     config: {
-        appVersion: '1.7.0',
+        appVersion: '1.9.0',
         nodeRadius: 40, subRadius: 30, linkDistance: 150, chargeStrength: -800, collideRadius: 55,
         dbName: 'MindFlowDB', storeName: 'projects',
         previewDelay: 50
@@ -22,7 +22,6 @@ const app = {
         editingResId: null,
         expandedFolders: new Set(),
         draggedResId: null,
-        // [新增] 本地文件句柄，用于直接读写磁盘
         fileHandle: null
     },
 
@@ -52,7 +51,6 @@ const app = {
             await localforage.setItem(id, newProj);
             app.state.projectsIndex.push({ id: id, name: name });
             await this.saveIndex();
-            // 新建项目时清空文件句柄
             app.state.fileHandle = null;
             return id;
         },
@@ -79,7 +77,7 @@ const app = {
                 if (app.state.currentId === id) {
                     app.state.currentId = null;
                     app.state.nodes = []; app.state.links = []; app.state.resources = [];
-                    app.state.fileHandle = null; // 清空句柄
+                    app.state.fileHandle = null;
                     app.graph.updateSimulation();
                     app.ui.renderResourceTree();
                     document.getElementById('projTitleInput').value = '';
@@ -95,8 +93,9 @@ const app = {
                 if (!proj) throw new Error('项目不存在');
 
                 app.state.currentId = id;
-                app.state.fileHandle = null; // 切换项目时重置句柄，除非是从文件打开的
-                app.state.nodes = JSON.parse(JSON.stringify(proj.nodes || []));
+                app.state.fileHandle = null;
+                // 加载时直接设为完全体(scale=1)，不需要生长动画
+                app.state.nodes = (proj.nodes || []).map(n => ({...n, scale: 1}));
                 app.state.links = JSON.parse(JSON.stringify(proj.links || []));
                 app.state.resources = (proj.resources || []).map(r => ({ ...r, parentId: r.parentId || null }));
 
@@ -139,47 +138,28 @@ const app = {
             return newId;
         },
 
-        // --- File System Access API ---
-
-        // 打开本地文件 (带句柄)
         openFileHandle: async function() {
             try {
-                // 1. 获取文件句柄
                 const [handle] = await window.showOpenFilePicker({
                     types: [{ description: 'MindFlow Files', accept: { 'application/json': ['.json', '.mindflow'] } }],
                     multiple: false
                 });
-
-                // 2. 读取文件
                 const file = await handle.getFile();
                 const text = await file.text();
                 const json = JSON.parse(text);
-
                 if (!json.project) throw new Error('格式无效');
-
-                // 3. 导入数据
                 const newId = await this.importExternalProject(json.project);
                 await this.loadProject(newId);
-
-                // 4. 保存句柄到状态 (关键)
                 app.state.fileHandle = handle;
-
-                // 5. 更新 UI 提示
                 app.ui.toast('已打开本地文件 (支持直接保存)');
                 document.getElementById('projTitleInput').value = file.name.replace('.json', '').replace('.mindflow', '');
-
             } catch (err) {
-                if (err.name !== 'AbortError') {
-                    console.error(err);
-                    app.ui.toast('打开文件失败: ' + err.message);
-                }
+                if (err.name !== 'AbortError') { console.error(err); app.ui.toast('打开文件失败: ' + err.message); }
             }
         },
 
-        // 保存到本地文件 (有句柄则直接写，无句柄则另存为)
         saveToHandle: async function() {
             if (!app.state.currentId) return app.ui.toast('无数据可保存');
-
             const currentProjName = document.getElementById('projTitleInput').value || '未命名项目';
             const exportData = {
                 meta: { version: app.config.appVersion, type: 'MindFlowProject', exportedAt: Date.now() },
@@ -194,34 +174,25 @@ const app = {
 
             try {
                 if (app.state.fileHandle) {
-                    // --- 场景 A: 已有句柄，直接写入 ---
                     const writable = await app.state.fileHandle.createWritable();
-                    await writable.write(blob);
-                    await writable.close();
+                    await writable.write(blob); await writable.close();
                     app.ui.toast('已保存到磁盘文件');
                 } else {
-                    // --- 场景 B: 无句柄，另存为 ---
-                    // 尝试使用新 API 的“另存为”
                     if (window.showSaveFilePicker) {
                         const handle = await window.showSaveFilePicker({
                             suggestedName: `${currentProjName}.mindflow.json`,
                             types: [{ description: 'MindFlow Files', accept: { 'application/json': ['.json', '.mindflow'] } }]
                         });
                         const writable = await handle.createWritable();
-                        await writable.write(blob);
-                        await writable.close();
-                        app.state.fileHandle = handle; // 记住句柄，下次直接保存
+                        await writable.write(blob); await writable.close();
+                        app.state.fileHandle = handle;
                         app.ui.toast('已另存为本地文件');
                     } else {
-                        // --- 场景 C: 不支持新 API，回退到下载 ---
                         this.fallbackDownload(blob, `${currentProjName}.mindflow.json`);
                     }
                 }
             } catch (err) {
-                if (err.name !== 'AbortError') {
-                    console.error(err);
-                    app.ui.toast('保存到磁盘失败');
-                }
+                if (err.name !== 'AbortError') { console.error(err); app.ui.toast('保存到磁盘失败'); }
             }
         },
 
@@ -275,18 +246,29 @@ const app = {
         addRootNode: function() {
             if (!app.state.currentId) return app.ui.toast('请先新建项目');
             if (app.state.nodes.length > 0) return app.ui.toast('根节点已存在');
-            app.state.nodes.push({ id: 'n_' + Date.now(), type: 'root', x: 0, y: 0, label: '中心主题' });
+
+            app.state.nodes.push({
+                id: 'n_' + Date.now(), type: 'root', x: 0, y: 0, label: '中心主题',
+                scale: 0.1
+            });
             this.updateSimulation(); app.storage.forceSave();
         },
 
         addChildNode: function(parent) {
             const angle = Math.random() * Math.PI * 2;
-            app.state.nodes.push({
+            const node = {
                 id: 'n_' + Date.now(), type: 'sub',
-                x: parent.x + Math.cos(angle) * 10, y: parent.y + Math.sin(angle) * 10, label: '新节点'
-            });
-            app.state.links.push({ source: parent.id, target: app.state.nodes[app.state.nodes.length-1].id });
-            this.updateSimulation(); app.storage.forceSave();
+                // [优化1] 初始位置：从父节点中心往外延伸一点点，而不是完全重叠
+                // 这样物理引擎会有明确的推斥方向，而不是随机炸裂
+                x: parent.x + Math.cos(angle) * 10,
+                y: parent.y + Math.sin(angle) * 10,
+                label: '新节点',
+                scale: 0.05 // [优化2] 初始尺寸极小，几乎不可见
+            };
+            app.state.nodes.push(node);
+            app.state.links.push({ source: parent.id, target: node.id });
+            this.updateSimulation();
+            app.storage.forceSave();
         },
 
         clearAll: function() {
@@ -311,17 +293,23 @@ const app = {
             ctx.stroke();
 
             app.state.nodes.forEach(n => {
-                const r = n.type === 'root' ? app.config.nodeRadius : app.config.subRadius;
+                // [优化3] 极度平滑的生长曲线 (Ease-out effect)
+                // 之前是线性的 0.05，现在这种算法会让它开始快、结尾慢，显得更有质感
+                if (typeof n.scale === 'undefined') n.scale = 1;
+                if (n.scale < 1) {
+                    n.scale += (1 - n.scale) * 0.15; // 每次增加剩余差距的15%
+                    if (n.scale > 0.99) n.scale = 1; // 阈值锁定
+                }
+
+                const r = (n.type === 'root' ? app.config.nodeRadius : app.config.subRadius) * (n.scale || 1);
 
                 let fillColor = 'white';
                 let hasImg = false;
                 const res = n.resId ? app.state.resources.find(r => r.id === n.resId) : null;
 
-                if (res && res.type === 'color') {
-                    fillColor = res.content;
-                }
+                if (res && res.type === 'color') { fillColor = res.content; }
 
-                ctx.shadowColor = 'rgba(0,0,0,0.1)'; ctx.shadowBlur = 10;
+                ctx.shadowColor = 'rgba(0,0,0,0.1)'; ctx.shadowBlur = 10 * (n.scale || 1);
                 ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
                 ctx.fillStyle = fillColor; ctx.fill(); ctx.shadowBlur = 0;
 
@@ -333,25 +321,30 @@ const app = {
                         if (res.type === 'md') icon = '📝';
                         else if (res.type === 'code') icon = '💻';
                         else if (res.type === 'audio') icon = '🎤';
-                        ctx.font = '20px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                        ctx.font = `${20 * (n.scale||1)}px Arial`;
+                        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
                         ctx.fillText(icon, n.x, n.y - 5);
                     }
                 }
 
                 ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
-                ctx.lineWidth = 3;
+                ctx.lineWidth = 3 * (n.scale || 1);
                 ctx.strokeStyle = (app.state.selectedNode === n) ? '#e74c3c' : (n.type === 'root' ? '#2c3e50' : '#667eea');
                 ctx.stroke();
 
-                ctx.fillStyle = '#334155'; ctx.font = 'bold 12px Arial';
+                ctx.globalAlpha = n.scale || 1;
+                ctx.fillStyle = '#334155'; ctx.font = `bold ${12 * (n.scale||1)}px Arial`;
                 ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
                 const textY = hasImg ? n.y + r + 15 : (n.resId && !hasImg ? n.y + 15 : n.y);
                 ctx.fillText(n.label, n.x, textY);
+                ctx.globalAlpha = 1;
 
-                const btnX = n.x + r * 0.707; const btnY = n.y + r * 0.707;
-                ctx.beginPath(); ctx.arc(btnX, btnY, 9, 0, Math.PI * 2);
-                ctx.fillStyle = '#22c55e'; ctx.fill();
-                ctx.fillStyle = 'white'; ctx.font = 'bold 14px Arial'; ctx.fillText('+', btnX, btnY + 1);
+                if (n.scale >= 0.9) {
+                    const btnX = n.x + r * 0.707; const btnY = n.y + r * 0.707;
+                    ctx.beginPath(); ctx.arc(btnX, btnY, 9, 0, Math.PI * 2);
+                    ctx.fillStyle = '#22c55e'; ctx.fill();
+                    ctx.fillStyle = 'white'; ctx.font = 'bold 14px Arial'; ctx.fillText('+', btnX, btnY + 1);
+                }
             });
 
             ctx.restore();
@@ -404,6 +397,8 @@ const app = {
             });
 
             const handleStart = (e) => {
+                // [优化] 点击/触摸画布任意位置时，强制隐藏菜单
+                // 这样当你操作节点或拖拽画布时，菜单就会自动消失
                 const menu = document.getElementById('nodeMenu');
                 if (menu.style.display !== 'none') {
                     menu.style.display = 'none';
@@ -414,7 +409,7 @@ const app = {
                 let hitNode = null;
                 for (let i = app.state.nodes.length - 1; i >= 0; i--) {
                     const n = app.state.nodes[i];
-                    const r = n.type === 'root' ? app.config.nodeRadius : app.config.subRadius;
+                    const r = (n.type === 'root' ? app.config.nodeRadius : app.config.subRadius) * (n.scale || 1);
                     if (Math.hypot(m.x - (n.x + r*0.707), m.y - (n.y + r*0.707)) < 15) { this.addChildNode(n); return; }
                     if (Math.hypot(m.x - n.x, m.y - n.y) < r) { hitNode = n; break; }
                 }
@@ -432,7 +427,7 @@ const app = {
                     let hoverNode = null;
                     for (let i = app.state.nodes.length - 1; i >= 0; i--) {
                         const n = app.state.nodes[i];
-                        const r = n.type === 'root' ? app.config.nodeRadius : app.config.subRadius;
+                        const r = (n.type === 'root' ? app.config.nodeRadius : app.config.subRadius) * (n.scale || 1);
                         if (Math.hypot(m.x - n.x, m.y - n.y) < r) { hoverNode = n; break; }
                     }
                     if (hoverNode && hoverNode.resId) app.ui.showTooltip(hoverNode, e.clientX, e.clientY);
@@ -463,6 +458,8 @@ const app = {
             canvas.addEventListener('touchmove', handleMove, {passive: false});
             window.addEventListener('touchend', handleEnd);
             canvas.addEventListener('wheel', (e) => {
+                // [优化] 滚轮缩放时也隐藏菜单
+                document.getElementById('nodeMenu').style.display = 'none';
                 e.preventDefault(); const f = e.deltaY < 0 ? 1.1 : 0.9;
                 app.state.camera.k = Math.max(0.1, Math.min(5, app.state.camera.k * f));
             });
@@ -604,12 +601,11 @@ const app = {
             document.getElementById('nodeMenu').style.display = 'none';
         },
 
-        // --- 暴露文件系统接口给 HTML 按钮调用 ---
         triggerOpenDisk: function() {
             if (window.showOpenFilePicker) {
                 app.storage.openFileHandle();
             } else {
-                app.ui.triggerImport(); // 回退到旧版
+                app.ui.triggerImport(); // 回退
             }
         },
 
@@ -617,10 +613,9 @@ const app = {
             if (window.showSaveFilePicker) {
                 app.storage.saveToHandle();
             } else {
-                app.storage.exportProjectToFile(); // 回退到旧版
+                app.storage.exportProjectToFile(); // 回退
             }
         },
-        // ------------------------------------
 
         importProjectFromFile: function(file) { app.storage.importProjectFromFile(file); },
         exportProjectToFile: function() { app.storage.exportProjectToFile(); }
@@ -694,7 +689,6 @@ const app = {
             app.state.draggedResId = null;
         },
 
-        // --- 核心：通用预览显示逻辑 ---
         displayTooltip: function(resId, x, y) {
             clearTimeout(app.state.tooltipTimer);
             const res = app.state.resources.find(r => r.id === resId);
@@ -793,7 +787,6 @@ const app = {
             let icon = '🔗';
             if(r.type==='image') icon='🖼️'; else if(r.type==='md') icon='📝'; else if(r.type==='code') icon='💻'; else if(r.type==='color') icon='🎨'; else if(r.type==='audio') icon='🎤';
 
-            // [新增] 绑定 onmouseenter/onmouseleave 实现侧边栏预览
             return `
                 <div class="res-item" 
                      draggable="true" 
