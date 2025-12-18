@@ -261,7 +261,7 @@ canvas:active { cursor: grabbing; }
     /* JS 会控制 top/left 来对齐节点中心 */
 
     /* [新增] 定义默认半径，确保在 JS 计算前也有合理的初始位置 */
-    --node-radius: 4px;
+    --node-radius: 40px;
 }
 
 .bubble-btn {
@@ -290,7 +290,7 @@ canvas:active { cursor: grabbing; }
     transform: translate(20%, calc(-100% - var(--node-radius) - 10px));
 }
 
-.bubble-btn:hover { background: rgba(128,128,128,0.1); transform: scale(1.1); /* 简化为仅缩放，移除非法的 translate(...) */ }
+.bubble-btn:hover { background: rgba(128,128,128,0.1); transform: scale(1.1); /* 注意：scale 会覆盖 translate，需小心组合，这里简化处理，只做颜色 */ }
 .bubble-btn.action-edit:hover { transform: translate(-120%, calc(-100% - var(--node-radius) - 13px)); /* 悬浮稍微上浮 */ }
 .bubble-btn.action-delete:hover {
     background: #fee2e2; color: var(--danger);
@@ -336,6 +336,136 @@ canvas:active { cursor: grabbing; }
 }
 .md-preview { font-size: 13px; line-height: 1.6; color: var(--text-main); }
 .md-preview code { color: var(--primary); background: rgba(99, 102, 241, 0.1); }
+
+/* [新增] 现代化编辑面板样式 */
+.modern-panel {
+    /* 覆盖旧的 .node-menu 样式 */
+    position: absolute;
+    width: 320px;
+    background: var(--bg-surface);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    padding: 0; /* 内部用 flex 布局 */
+    border-radius: 16px;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.1), 0 0 0 1px var(--border-color);
+    border: none;
+    z-index: 50;
+    animation: panelSlideUp 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+@keyframes panelSlideUp {
+    from { opacity: 0; transform: translateY(10px) scale(0.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.panel-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(255,255,255,0.05);
+}
+
+.panel-header h3 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text-main);
+    display: flex; align-items: center; gap: 6px;
+}
+
+.close-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-sub);
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    transition: all 0.2s;
+}
+.close-btn:hover { background: rgba(128,128,128,0.1); color: var(--text-main); }
+
+.panel-body {
+    padding: 20px;
+}
+
+.panel-label {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-sub);
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.panel-input, .panel-select {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    font-size: 14px;
+    background: var(--bg-surface-solid);
+    color: var(--text-main);
+    transition: all 0.2s;
+    box-shadow: inset 0 1px 2px rgba(0,0,0,0.02);
+}
+
+.panel-input:focus, .panel-select:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+    background: var(--bg-surface-solid);
+}
+
+.select-wrapper {
+    position: relative;
+}
+.panel-select {
+    appearance: none;
+    padding-right: 30px;
+    cursor: pointer;
+}
+.select-arrow {
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 10px;
+    color: var(--text-sub);
+    pointer-events: none;
+}
+
+.panel-hint {
+    display: block;
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--text-sub);
+    opacity: 0.8;
+}
+
+.panel-footer {
+    padding: 16px 20px;
+    border-top: 1px solid var(--border-color);
+    background: rgba(128,128,128,0.02);
+}
+
+.full-width {
+    width: 100%;
+    padding: 10px;
+    border-radius: 8px;
+    font-size: 14px;
+}
+
+/* 适配深色模式的微调 */
+[data-theme="dark"] .modern-panel {
+    box-shadow: 0 20px 40px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.1);
+}
 
 @media (max-width: 768px) {
     .sidebar { position: absolute; height: 100%; box-shadow: var(--shadow-lg); }

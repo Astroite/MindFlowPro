@@ -916,8 +916,8 @@ const app = {
             this.hideNodeBubble();
             // 复用 openNodeMenu，但现在它作为“现代化交互面板”
             // 计算面板位置（屏幕中央偏上，或者跟随鼠标，这里简单居中显示）
-            const cx = window.innerWidth / 2 - 150; // 300px width / 2
-            const cy = window.innerHeight / 2 - 150;
+            const cx = window.innerWidth / 2 - 160; // 320px width / 2
+            const cy = window.innerHeight / 2 - 180;
             this.openNodeMenu(node, cx, cy);
         },
 
@@ -1166,14 +1166,26 @@ const app = {
 
             // 如果传入 x, y 则定位到那里，否则默认居中 (在 onBubbleEdit 中调用时)
             if (x !== undefined && y !== undefined) {
-                m.style.left = Math.min(x,window.innerWidth-300)+'px';
-                m.style.top = Math.min(y,window.innerHeight-250)+'px';
+                // 简单的边界检查，防止面板跑出屏幕
+                const rectWidth = 320;
+                const rectHeight = 350; // 估算高度
+
+                let left = x;
+                let top = y;
+
+                if (left + rectWidth > window.innerWidth) left = window.innerWidth - rectWidth - 20;
+                if (top + rectHeight > window.innerHeight) top = window.innerHeight - rectHeight - 20;
+                if (left < 20) left = 20;
+                if (top < 20) top = 20;
+
+                m.style.left = left + 'px';
+                m.style.top = top + 'px';
             } else {
                 // 居中
-                m.style.left = (window.innerWidth/2 - 150) + 'px';
-                m.style.top = (window.innerHeight/2 - 100) + 'px';
+                m.style.left = (window.innerWidth/2 - 160) + 'px';
+                m.style.top = (window.innerHeight/2 - 150) + 'px';
             }
-            m.style.display = 'block';
+            m.style.display = 'flex'; // Flex 用于内部布局
         },
 
         toggleSidebar: function() { document.getElementById('sidebar').classList.toggle('closed'); },

@@ -109,13 +109,31 @@
     </div>
 </div>
 
-<div class="node-menu" id="nodeMenu" style="display: none;">
-    <h3 style="margin-bottom: 15px; font-size: 16px;">节点属性</h3>
-    <div class="form-group"><label>节点名称</label><input type="text" id="nodeLabel" class="form-input"></div>
-    <div class="form-group"><label>关联资源</label><select id="nodeResSelect" class="form-input"></select></div>
-    <div class="menu-actions">
-        <button class="btn-secondary small" style="flex:1" onclick="document.getElementById('nodeMenu').style.display='none'">取消</button>
-        <button class="btn-primary small" style="flex:1" onclick="app.data.saveNodeEdit()">保存修改</button>
+<!-- [修改] 现代化节点属性面板 -->
+<div class="node-menu modern-panel" id="nodeMenu" style="display: none;">
+    <div class="panel-header">
+        <h3>✨ 编辑节点</h3>
+        <button class="close-btn" onclick="document.getElementById('nodeMenu').style.display='none'">×</button>
+    </div>
+
+    <div class="panel-body">
+        <div class="form-group">
+            <label class="panel-label">节点名称</label>
+            <input type="text" id="nodeLabel" class="form-input panel-input" placeholder="输入节点标题...">
+        </div>
+
+        <div class="form-group">
+            <label class="panel-label">关联资源</label>
+            <div class="select-wrapper">
+                <select id="nodeResSelect" class="form-input panel-select"></select>
+                <span class="select-arrow">▼</span>
+            </div>
+            <small class="panel-hint">关联后，悬浮节点即可预览内容</small>
+        </div>
+    </div>
+
+    <div class="panel-footer">
+        <button class="btn-primary full-width" onclick="app.data.saveNodeEdit()">保存修改</button>
     </div>
 </div>
 
