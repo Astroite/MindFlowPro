@@ -1,15 +1,15 @@
 /**
  * MindFlow - App Logic
  * 更新内容：
- * 1. 修复文件夹删除时的级联清理逻辑（自动断开子文件的节点关联）
- * 2. 增强资源重命名和删除的健壮性
- * 3. 渲染优化：视锥剔除 (Viewport Culling)
+ * 1. 引入“操作气泡”交互模式 (Click -> Bubble -> Edit/Delete)
+ * 2. 移除双击打开菜单逻辑
+ * 3. 气泡跟随节点实时移动
  */
 
 const app = {
     // --- 配置 ---
     config: {
-        appVersion: '2.5.2', // 版本号更新
+        appVersion: '2.5.3', // 版本号更新
         nodeRadius: 40, subRadius: 30, linkDistance: 150, chargeStrength: -300, collideRadius: 55,
         dbName: 'MindFlowDB', storeName: 'projects',
         previewDelay: 50,
@@ -34,8 +34,10 @@ const app = {
 
         // 多选集合 Set<NodeId>
         selectedNodes: new Set(),
-        // 专门记录当前正在编辑（双击打开菜单）的节点，与选中态解耦
-        editingNode: null,
+
+        // [修改] 气泡交互状态
+        bubbleNode: null, // 当前显示气泡的节点
+        editingNode: null, // 当前正在面板中编辑的节点
 
         tempFileBase64: null, hoverNode: null, tooltipTimer: null,
         editingResId: null,
@@ -119,7 +121,9 @@ const app = {
                 app.state.links = JSON.parse(JSON.stringify(proj.links || []));
                 app.state.resources = (proj.resources || []).map(r => ({ ...r, parentId: r.parentId || null }));
 
-                app.state.selectedNodes.clear(); // 清空选中
+                app.state.selectedNodes.clear();
+                app.ui.hideNodeBubble(); // 切换项目时隐藏气泡
+
                 document.getElementById('projTitleInput').value = proj.name;
                 app.graph.resetCamera(); app.graph.imageCache.clear();
                 app.state.searchKeyword = '';
@@ -267,12 +271,10 @@ const app = {
             app.state.simulation.alpha(1).restart();
         },
 
-        // [新增] 检查节点是否在视口可见范围内
         isNodeVisible: function(node, padding = 100) {
             const cam = app.state.camera;
             const r = (node.type === 'root' ? app.config.nodeRadius : app.config.subRadius) * (node.scale || 1);
 
-            // 计算视口在世界坐标系中的边界
             const minX = -cam.x / cam.k - padding;
             const minY = -cam.y / cam.k - padding;
             const maxX = (this.width - cam.x) / cam.k + padding;
@@ -301,6 +303,8 @@ const app = {
 
             app.state.selectedNodes.clear();
             app.state.selectedNodes.add(node.id);
+            // [新增] 添加节点后立即显示气泡，方便后续操作
+            app.ui.showNodeBubble(node);
 
             this.updateSimulation(); app.storage.forceSave();
             app.ui.toast('已添加新主题节点');
@@ -318,6 +322,7 @@ const app = {
 
             app.state.selectedNodes.clear();
             app.state.selectedNodes.add(node.id);
+            app.ui.showNodeBubble(node); // 显示气泡
 
             this.updateSimulation(); app.storage.forceSave();
         },
@@ -326,11 +331,11 @@ const app = {
             if(confirm('确定清空画布吗？')) {
                 app.state.nodes = []; app.state.links = [];
                 app.state.selectedNodes.clear();
+                app.ui.hideNodeBubble();
                 this.updateSimulation(); app.storage.forceSave();
             }
         },
 
-        // [修改] 引入视锥剔除优化的渲染循环
         renderLoop: function() {
             const ctx = this.ctx; const cam = app.state.camera;
             ctx.clearRect(0, 0, this.width, this.height);
@@ -338,7 +343,6 @@ const app = {
             ctx.translate(cam.x, cam.y);
             ctx.scale(cam.k, cam.k);
 
-            // 1. 绘制连线
             ctx.beginPath();
             ctx.strokeStyle = app.config.colors.link;
             ctx.lineWidth = 1.5;
@@ -353,9 +357,7 @@ const app = {
             });
             ctx.stroke();
 
-            // 2. 绘制节点
             app.state.nodes.forEach(n => {
-                // [优化点] 不可见则直接跳过后续绘制计算
                 if (!this.isNodeVisible(n)) return;
 
                 if (typeof n.scale === 'undefined') n.scale = 1;
@@ -434,6 +436,10 @@ const app = {
             });
 
             ctx.restore();
+
+            // [新增] 每一帧都更新气泡位置，实现完美跟随（包括物理运动时）
+            app.ui.updateBubblePosition();
+
             requestAnimationFrame(() => this.renderLoop());
         },
 
@@ -474,14 +480,15 @@ const app = {
                 if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
                 if (e.key === 'Delete' || e.key === 'Backspace') {
                     if (app.state.selectedNodes.size > 0) {
-                        app.data.deleteNode();
+                        app.ui.onBubbleDelete(); // 使用统一的带确认的删除逻辑
                     }
                 }
             });
 
             const handleStart = (e) => {
-                const menu = document.getElementById('nodeMenu');
-                if (menu.style.display !== 'none') menu.style.display = 'none';
+                // 点击画布任意位置，先隐藏之前的菜单（不是气泡）
+                document.getElementById('nodeMenu').style.display = 'none';
+
                 if (e.target !== canvas) return;
 
                 if (e.touches && e.touches.length === 2) {
@@ -497,7 +504,9 @@ const app = {
                 for (let i = app.state.nodes.length - 1; i >= 0; i--) {
                     const n = app.state.nodes[i];
                     const r = (n.type === 'root' ? app.config.nodeRadius : app.config.subRadius) * (n.scale || 1);
+                    // 点击加号
                     if (Math.hypot(m.x - (n.x + r*0.707), m.y - (n.y + r*0.707)) < 15) { this.addChildNode(n); return; }
+                    // 点击节点本体
                     if (Math.hypot(m.x - n.x, m.y - n.y) < r) { hitNode = n; break; }
                 }
 
@@ -505,16 +514,21 @@ const app = {
                     if (e.ctrlKey || e.metaKey) {
                         if (app.state.selectedNodes.has(hitNode.id)) {
                             app.state.selectedNodes.delete(hitNode.id);
+                            app.ui.hideNodeBubble(); // 取消选中，隐藏气泡
                             this.dragSubject = null;
                         } else {
                             app.state.selectedNodes.add(hitNode.id);
+                            app.ui.showNodeBubble(hitNode); // 显示气泡
                             this.dragSubject = hitNode;
                         }
                     } else {
+                        // 单选逻辑
                         if (!app.state.selectedNodes.has(hitNode.id)) {
                             app.state.selectedNodes.clear();
                             app.state.selectedNodes.add(hitNode.id);
                         }
+                        // 无论是否已经选中，单击都应该显示气泡（如果还没显示的话）
+                        app.ui.showNodeBubble(hitNode);
                         this.dragSubject = hitNode;
                     }
 
@@ -524,8 +538,10 @@ const app = {
                         app.state.simulation.alphaTarget(0.3).restart();
                     }
                 } else {
+                    // 点击空白处
                     if (!e.ctrlKey && !e.metaKey) {
                         app.state.selectedNodes.clear();
+                        app.ui.hideNodeBubble(); // 隐藏气泡
                     }
                     this.isPanning = true; this.startPan = { x: m.rawX, y: m.rawY };
                 }
@@ -552,13 +568,19 @@ const app = {
                     if (hoverNode && hoverNode.resId) app.ui.showTooltip(hoverNode, e.clientX, e.clientY);
                     else app.ui.hideTooltip();
                 }
+
                 if (!this.dragSubject && !this.isPanning) return;
                 e.preventDefault();
                 const m = getPos(e);
+
                 if (this.dragSubject) {
+                    // [修改] 拖拽开始，隐藏气泡以免遮挡视线
+                    app.ui.hideNodeBubble();
                     this.dragSubject.fx = m.x; this.dragSubject.fy = m.y;
                 }
                 else if (this.isPanning) {
+                    // [修改] 移动画布，也隐藏气泡
+                    app.ui.hideNodeBubble();
                     app.state.camera.x += m.rawX - this.startPan.x; app.state.camera.y += m.rawY - this.startPan.y;
                     this.startPan = { x: m.rawX, y: m.rawY };
                 }
@@ -568,7 +590,12 @@ const app = {
                 if (e.touches && e.touches.length < 2) this.pinchStartDist = null;
                 if (this.dragSubject) {
                     this.dragSubject.fx = null; this.dragSubject.fy = null;
-                    app.state.simulation.alphaTarget(0); this.dragSubject = null;
+                    app.state.simulation.alphaTarget(0);
+                    // 拖拽结束，如果只选中了一个节点，重新显示气泡（可选，体验更好）
+                    if (app.state.selectedNodes.size === 1 && app.state.selectedNodes.has(this.dragSubject.id)) {
+                        app.ui.showNodeBubble(this.dragSubject);
+                    }
+                    this.dragSubject = null;
                 }
                 this.isPanning = false;
             };
@@ -581,18 +608,11 @@ const app = {
             window.addEventListener('touchend', handleEnd);
             canvas.addEventListener('wheel', (e) => {
                 document.getElementById('nodeMenu').style.display = 'none';
+                app.ui.hideNodeBubble(); // 缩放时隐藏气泡
                 e.preventDefault(); const f = e.deltaY < 0 ? 1.1 : 0.9;
                 app.state.camera.k = Math.max(0.1, Math.min(5, app.state.camera.k * f));
             });
-            canvas.addEventListener('dblclick', (e) => {
-                const m = getPos(e);
-                const hit = app.state.nodes.find(n => Math.hypot(m.x - n.x, m.y - n.y) < (n.type==='root'?40:30));
-                if (hit) {
-                    app.state.selectedNodes.clear();
-                    app.state.selectedNodes.add(hit.id);
-                    app.ui.openNodeMenu(hit, e.clientX, e.clientY);
-                }
-            });
+            // [修改] 移除了 dblclick 事件
         }
     },
 
@@ -613,7 +633,6 @@ const app = {
             app.storage.forceSave();
         },
 
-        // [修改] 优化文件夹重命名，增加非空和去重检查
         renameFolder: function(id) {
             const folder = app.state.resources.find(r => r.id === id);
             if (!folder) return;
@@ -689,7 +708,6 @@ const app = {
             app.ui.openResModal('Edit', res);
         },
 
-        // [修改] 级联删除资源：如果是文件夹，同时删除其内容，并清理画布上关联的节点引用
         deleteResource: function(id) {
             const res = app.state.resources.find(r => r.id === id);
             if (!res) return;
@@ -698,14 +716,12 @@ const app = {
             if (res.type === 'folder') confirmMsg = '确定删除此文件夹及其所有内容吗？此操作不可恢复。';
             if (!confirm(confirmMsg)) return;
 
-            // 收集所有需要删除的资源 ID
             let idsToDelete = [id];
             if (res.type === 'folder') {
                 const children = app.state.resources.filter(r => r.parentId === id);
                 children.forEach(c => idsToDelete.push(c.id));
             }
 
-            // 1. 清理画布上所有关联了这些资源的节点的 resId
             let updateNodes = false;
             app.state.nodes.forEach(n => {
                 if (n.resId && idsToDelete.includes(n.resId)) {
@@ -714,10 +730,8 @@ const app = {
                 }
             });
 
-            // 2. 从资源列表中删除
             app.state.resources = app.state.resources.filter(r => !idsToDelete.includes(r.id));
 
-            // 3. 更新 UI
             app.ui.renderResourceTree();
             app.storage.forceSave();
             app.ui.toast(idsToDelete.length > 1 ? `已删除文件夹及 ${idsToDelete.length-1} 个文件` : '资源已删除');
@@ -729,14 +743,13 @@ const app = {
                 node.label = document.getElementById('nodeLabel').value;
                 node.resId = document.getElementById('nodeResSelect').value || null;
                 app.storage.forceSave(); document.getElementById('nodeMenu').style.display = 'none';
+                app.ui.toast('节点已保存');
             }
         },
 
         deleteNode: function() {
             let nodesToDelete = Array.from(app.state.selectedNodes);
-            if (app.state.editingNode && nodesToDelete.indexOf(app.state.editingNode.id) === -1) {
-                nodesToDelete = [app.state.editingNode.id];
-            }
+            // 如果是通过气泡删除，bubbleNode 肯定在 selectedNodes 里，所以这里不需要额外检查 editingNode
 
             if (nodesToDelete.length === 0) return;
 
@@ -776,10 +789,14 @@ const app = {
             });
 
             app.state.selectedNodes.clear();
+            app.state.bubbleNode = null; // 清除气泡状态
             app.state.editingNode = null;
+            app.ui.hideNodeBubble(); // 确保UI隐藏
+
             app.graph.updateSimulation();
             app.storage.forceSave();
-            document.getElementById('nodeMenu').style.display = 'none';
+
+            app.ui.toast(nodesToDelete.length > 1 ? `已删除 ${nodesToDelete.length} 个节点` : '节点已删除');
         },
 
         triggerOpenDisk: function() {
@@ -853,6 +870,57 @@ const app = {
             } else {
                 body.setAttribute('data-theme', 'dark');
                 localStorage.setItem('theme', 'dark');
+            }
+        },
+
+        // [新增] 气泡相关方法
+        showNodeBubble: function(node) {
+            app.state.bubbleNode = node;
+            const bubble = document.getElementById('nodeBubble');
+            bubble.style.display = 'flex';
+            this.updateBubblePosition();
+        },
+
+        hideNodeBubble: function() {
+            app.state.bubbleNode = null;
+            document.getElementById('nodeBubble').style.display = 'none';
+        },
+
+        updateBubblePosition: function() {
+            const node = app.state.bubbleNode;
+            if (!node) return;
+
+            const cam = app.state.camera;
+            const r = (node.type === 'root' ? app.config.nodeRadius : app.config.subRadius) * (node.scale || 1);
+
+            // 计算节点在屏幕上的位置
+            const screenX = node.x * cam.k + cam.x;
+            const screenY = node.y * cam.k + cam.y;
+            const screenR = r * cam.k;
+
+            const bubble = document.getElementById('nodeBubble');
+            // 将气泡定位到节点正上方 (marginTop 在 CSS 中处理了间距)
+            bubble.style.left = screenX + 'px';
+            bubble.style.top = (screenY - screenR) + 'px';
+        },
+
+        onBubbleEdit: function() {
+            const node = app.state.bubbleNode;
+            if (!node) return;
+            // 打开面板前隐藏气泡
+            this.hideNodeBubble();
+            // 复用 openNodeMenu，但现在它作为“现代化交互面板”
+            // 计算面板位置（屏幕中央偏上，或者跟随鼠标，这里简单居中显示）
+            const cx = window.innerWidth / 2 - 150; // 300px width / 2
+            const cy = window.innerHeight / 2 - 150;
+            this.openNodeMenu(node, cx, cy);
+        },
+
+        onBubbleDelete: function() {
+            if (!app.state.bubbleNode) return;
+            // 确认删除
+            if(confirm('确定要删除这个节点及其连线吗？')) {
+                app.data.deleteNode();
             }
         },
 
@@ -967,7 +1035,6 @@ const app = {
 
                 const isOpen = keyword ? true : app.state.expandedFolders.has(folder.id);
 
-                // [修改] 增加 oncontextmenu 事件，支持右键操作（尽管目前逻辑和按钮一致，但这符合桌面软件直觉）
                 html += `
                     <div class="res-folder ${isOpen?'open':''}" 
                          onclick="app.ui.toggleFolder('${folder.id}')"
@@ -1081,17 +1148,27 @@ const app = {
         openModal: function() { this.openResModal('New'); },
         closeModal: function(id) { document.getElementById(id).style.display='none'; },
 
-        // 打开节点菜单时，设置 editingNode
+        // [修改] 打开节点编辑面板
         openNodeMenu: function(node, x, y) {
             const m = document.getElementById('nodeMenu');
-            app.state.editingNode = node; // 记录当前正在编辑的节点
+            app.state.editingNode = node;
 
             document.getElementById('nodeLabel').value = node.label;
             const sel = document.getElementById('nodeResSelect');
             sel.innerHTML = '<option value="">(无)</option>' + app.state.resources.filter(r=>r.type!=='folder').map(r =>
                 `<option value="${r.id}" ${r.id===node.resId?'selected':''}>${r.name}</option>`
             ).join('');
-            m.style.display = 'block'; m.style.left = Math.min(x,window.innerWidth-260)+'px'; m.style.top = Math.min(y,window.innerHeight-200)+'px';
+
+            // 如果传入 x, y 则定位到那里，否则默认居中 (在 onBubbleEdit 中调用时)
+            if (x !== undefined && y !== undefined) {
+                m.style.left = Math.min(x,window.innerWidth-300)+'px';
+                m.style.top = Math.min(y,window.innerHeight-250)+'px';
+            } else {
+                // 居中
+                m.style.left = (window.innerWidth/2 - 150) + 'px';
+                m.style.top = (window.innerHeight/2 - 100) + 'px';
+            }
+            m.style.display = 'block';
         },
 
         toggleSidebar: function() { document.getElementById('sidebar').classList.toggle('closed'); },

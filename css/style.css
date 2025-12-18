@@ -234,12 +234,12 @@ canvas:active { cursor: grabbing; }
 /* --- 菜单与弹窗 --- */
 .node-menu {
     position: absolute; background: var(--bg-surface); backdrop-filter: blur(10px);
-    padding: 16px; border-radius: var(--radius-lg); box-shadow: var(--shadow-lg);
-    border: 1px solid var(--border-color); width: 260px; z-index: 50;
+    padding: 20px; border-radius: var(--radius-lg); box-shadow: var(--shadow-lg);
+    border: 1px solid var(--border-color); width: 300px; z-index: 50;
     animation: fadeIn 0.1s ease-out;
 }
 
-.menu-actions { display: flex; gap: 8px; margin-top: 10px; }
+.menu-actions { display: flex; gap: 8px; margin-top: 15px; }
 .menu-actions button {
     flex: 1; padding: 8px; border-radius: 6px; border: none; font-weight: 600; cursor: pointer; transition: all 0.2s;
 }
@@ -247,6 +247,54 @@ canvas:active { cursor: grabbing; }
 .node-menu .btn-primary:hover { background: var(--primary-hover); }
 .node-menu .btn-danger { background: rgba(239, 68, 68, 0.1); color: var(--danger); }
 .node-menu .btn-danger:hover { background: var(--danger); color: white; }
+
+/* [新增] 气泡操作栏样式 */
+.node-bubble {
+    position: absolute;
+    background: var(--bg-surface-solid);
+    border: 1px solid var(--border-color);
+    border-radius: 50px;
+    padding: 6px 12px;
+    box-shadow: var(--shadow-md);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    z-index: 40;
+    pointer-events: auto;
+    transform: translate(-50%, -100%); /* 水平居中，垂直位于上方 */
+    margin-top: -15px; /* 距离节点的间距 */
+    animation: bubblePop 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes bubblePop {
+    from { opacity: 0; transform: translate(-50%, -80%) scale(0.9); }
+    to { opacity: 1; transform: translate(-50%, -100%) scale(1); }
+}
+
+.bubble-btn {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 16px;
+    padding: 0;
+    border-radius: 50%;
+    transition: all 0.2s;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-main);
+}
+
+.bubble-btn:hover { background: rgba(128,128,128,0.1); transform: translateY(-1px); }
+.bubble-btn:active { transform: translateY(0); }
+.bubble-btn.delete:hover { background: #fee2e2; color: var(--danger); }
+[data-theme="dark"] .bubble-btn.delete:hover { background: rgba(239, 68, 68, 0.2); }
+
+.bubble-divider {
+    width: 1px; height: 16px; background: var(--border-color);
+}
 
 .modal-overlay {
     position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.5);
