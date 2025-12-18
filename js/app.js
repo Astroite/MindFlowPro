@@ -628,7 +628,11 @@ const app = {
 
             let content = '';
             if (res.type === 'image') content = `<img src="${res.content}" style="max-width:100%; max-height:200px; display:block; border-radius:4px;">`;
-            else if (res.type === 'md') content = `<div style="white-space:pre-wrap; font-size:12px; color:#333; background:#f8f9fa; padding:8px; border-radius:4px;">${this.escapeHtml(res.content.substring(0, 200))}</div>`;
+            else if (res.type === 'md') {
+                // 使用 marked.parse 渲染 MD
+                const html = marked.parse(res.content);
+                content = `<div class="md-preview" style="background:#f8f9fa; padding:10px; border-radius:4px; max-height:280px; overflow-y:auto;">${html}</div>`;
+            }
             else if (res.type === 'code') content = `<pre style="font-family:monospace; background:#282c34; color:#abb2bf; padding:10px; border-radius:4px; font-size:12px; overflow:auto;">${this.escapeHtml(res.content)}</pre>`;
             else if (res.type === 'color') content = `<div style="width:100px; height:60px; background-color:${res.content}; border-radius:4px; border:1px solid #ddd; margin-bottom:5px;"></div><div style="text-align:center; font-family:monospace; font-weight:bold;">${res.content}</div>`;
             else if (res.type === 'audio') content = `<audio controls src="${res.content}" style="width:250px;"></audio>`;
