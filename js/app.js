@@ -1,13 +1,13 @@
 /**
  * MindFlow - App Logic
- * 更新内容：优化根节点视觉权重（更深的阴影、更强的层级感）
+ * 更新内容：物理引擎调优，为根节点增加“重量感”（通过增强排斥力和碰撞体积实现）
  */
 
 const app = {
     // --- 配置 ---
     config: {
-        appVersion: '2.2.0',
-        nodeRadius: 40, subRadius: 30, linkDistance: 150, chargeStrength: -800, collideRadius: 55,
+        appVersion: '2.3.0',
+        nodeRadius: 40, subRadius: 30, linkDistance: 150, chargeStrength: -300, collideRadius: 55,
         dbName: 'MindFlowDB', storeName: 'projects',
         previewDelay: 50,
         // 视觉配置
@@ -229,8 +229,16 @@ const app = {
 
             app.state.simulation = d3.forceSimulation()
                 .force("link", d3.forceLink().id(d => d.id).distance(app.config.linkDistance))
-                .force("charge", d3.forceManyBody().strength(app.config.chargeStrength))
-                .force("collide", d3.forceCollide().radius(app.config.collideRadius))
+
+                // [修改] 物理引擎调优：差异化排斥力
+                // 根节点 Charge 为 -240 (是普通节点的3倍)，形成强大的“领域”
+                // 普通节点 Charge 为 -80
+                .force("charge", d3.forceManyBody().strength(d => d.type === 'root' ? app.config.chargeStrength * 3 : app.config.chargeStrength))
+
+                // [修改] 物理引擎调优：差异化碰撞体积
+                // 根节点占据更大的物理空间，防止被挤压
+                .force("collide", d3.forceCollide().radius(d => d.type === 'root' ? app.config.collideRadius * 1.5 : app.config.collideRadius))
+
                 .force("x", d3.forceX(0).strength(0.01))
                 .force("y", d3.forceY(0).strength(0.01))
                 .on("tick", () => {});
@@ -328,14 +336,11 @@ const app = {
 
                 if (res && res.type === 'color') { fillColor = res.content; }
 
-                // [Modification] Enhanced Shadow/Elevation for Root Nodes
                 if (n.type === 'root') {
-                    // Heavy, elevated shadow
                     ctx.shadowColor = 'rgba(0,0,0,0.2)';
                     ctx.shadowBlur = 25 * (n.scale || 1);
                     ctx.shadowOffsetY = 8 * (n.scale || 1);
                 } else {
-                    // Standard light shadow
                     ctx.shadowColor = 'rgba(0,0,0,0.08)';
                     ctx.shadowBlur = 12 * (n.scale || 1);
                     ctx.shadowOffsetY = 4 * (n.scale || 1);
@@ -358,16 +363,13 @@ const app = {
                     }
                 }
 
-                // [Modification] Subtle Stroke/Border Logic
                 if (n.type === 'root') {
-                    // Optional: White inner border for root nodes to separate from heavy shadow
                     if (!res || res.type !== 'color') {
                         ctx.lineWidth = 2;
                         ctx.strokeStyle = 'rgba(255,255,255,0.2)';
                         ctx.stroke();
                     }
                 } else if (!res || res.type !== 'color') {
-                    // Standard outline for sub nodes
                     ctx.lineWidth = 1.5; ctx.strokeStyle = app.config.colors.outline; ctx.stroke();
                 }
 
