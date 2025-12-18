@@ -7,10 +7,11 @@
 
     <link rel="stylesheet" href="css/style.css">
 
-    <script src="https://d3js.org/d3.v7.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/localforage/1.10.0/localforage.min.js"></script>
-    <!-- [新增] Marked.js 用于 Markdown 渲染 -->
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- [修改] 第三方库改为本地引用，确保离线可用 -->
+    <!-- 请确保 js/lib/ 目录下存在以下三个文件 -->
+    <script src="js/lib/d3.v7.min.js"></script>
+    <script src="js/lib/localforage.min.js"></script>
+    <script src="js/lib/marked.min.js"></script>
 </head>
 <body>
 
