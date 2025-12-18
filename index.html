@@ -16,7 +16,6 @@
 <input type="file" id="importInput" style="display: none;" accept=".json,.mindflow">
 
 <div class="app-container">
-    <!-- 左侧边栏 -->
     <div class="sidebar closed" id="sidebar">
         <div class="sidebar-header">
             <div class="brand">MindFlow</div>
@@ -24,6 +23,11 @@
                 <select id="projSelect" class="project-select">
                     <option value="" disabled selected>正在加载...</option>
                 </select>
+                <!-- [新增] 搜索框 -->
+                <div class="search-box">
+                    <span class="search-icon">🔍</span>
+                    <input type="text" class="search-input" placeholder="搜索资源..." oninput="app.ui.filterResources(this.value)">
+                </div>
                 <div class="btn-group-mini">
                     <button class="btn-icon" title="导出到本地磁盘" onclick="app.data.triggerSaveDisk()">💾</button>
                     <button class="btn-icon" title="从磁盘打开项目" onclick="app.data.triggerOpenDisk()">📂</button>
@@ -34,7 +38,7 @@
 
         <div class="sidebar-content">
             <div id="resList" class="res-list tree-view">
-                <div class="empty-tip">暂无资源<br><small>点击下方按钮添加</small></div>
+                <div class="empty-tip">暂无资源</div>
             </div>
         </div>
 
@@ -44,48 +48,23 @@
         </div>
     </div>
 
-    <!-- 主画布区域 -->
     <div class="main-area">
-        <!-- 顶部悬浮工具栏 -->
         <div class="toolbar">
             <button class="tool-btn" onclick="app.ui.toggleSidebar()" title="菜单">☰</button>
-
             <div class="divider"></div>
-
-            <!-- 核心操作 -->
-            <button class="tool-btn primary" onclick="app.graph.addRootNode()" title="添加根节点">
-                <span>🎯 根节点</span>
-            </button>
-            <button class="tool-btn" onclick="app.graph.resetCamera()" title="视图归位">
-                <span>🔎 归位</span>
-            </button>
-
+            <button class="tool-btn primary" onclick="app.graph.addRootNode()" title="添加根节点"><span>🎯 根节点</span></button>
+            <button class="tool-btn" onclick="app.graph.resetCamera()" title="视图归位"><span>🔎 归位</span></button>
             <div class="divider"></div>
-
-            <!-- 项目标题 (居中) -->
-            <input type="text" id="projTitleInput" class="project-title-input"
-                   placeholder="未命名项目"
-                   onchange="app.data.renameProject(this.value)"
-                   title="点击重命名项目">
-
+            <input type="text" id="projTitleInput" class="project-title-input" placeholder="未命名项目" onchange="app.data.renameProject(this.value)" title="点击重命名项目">
             <div class="divider"></div>
-
-            <!-- 保存/清理 -->
-            <button class="tool-btn" onclick="app.storage.forceSave()" title="保存到浏览器数据库">
-                <span>☁️ 保存</span>
-            </button>
-            <button class="tool-btn danger" onclick="app.graph.clearAll()" title="清空画布">
-                <span>🗑️ 清空</span>
-            </button>
-
+            <button class="tool-btn" onclick="app.storage.forceSave()" title="保存到浏览器数据库"><span>☁️ 保存</span></button>
+            <button class="tool-btn danger" onclick="app.graph.clearAll()" title="清空画布"><span>🗑️ 清空</span></button>
             <div class="divider"></div>
-
-            <a href="https://astroite.com/article/2eh5d6so/" target="_blank" class="tool-btn" style="text-decoration: none; color: #6366f1;" title="说明书">
-                <span>❓</span>
-            </a>
+            <!-- [新增] 主题切换按钮 -->
+            <button class="tool-btn" onclick="app.ui.toggleTheme()" title="切换深色/浅色模式"><span>🌗</span></button>
+            <a href="https://astroite.com/article/2eh5d6so/" target="_blank" class="tool-btn" style="text-decoration: none; color: var(--primary);" title="说明书"><span>❓</span></a>
         </div>
 
-        <!-- 状态指示器 (移到右下角) -->
         <div id="saveStatus" class="status-text">就绪</div>
 
         <div class="canvas-wrapper" id="canvasWrapper">
@@ -94,7 +73,7 @@
     </div>
 </div>
 
-<!-- 弹窗：添加/编辑资源 (保持逻辑不变，样式已更新) -->
+<!-- 弹窗/菜单保持原样 -->
 <div class="modal-overlay" id="resModal" style="display: none;">
     <div class="modal-box">
         <h3 id="resModalTitle">添加资源</h3>
@@ -109,62 +88,31 @@
                 <option value="link">🔗 链接 (Link)</option>
             </select>
         </div>
-        <div class="form-group">
-            <label>位置 (文件夹)</label>
-            <select id="resParentId" class="form-input"><option value="">(根目录)</option></select>
-        </div>
-        <div class="form-group">
-            <label>名称</label>
-            <input type="text" id="resName" class="form-input" placeholder="输入资源名称">
-        </div>
-        <div class="form-group dynamic-input" id="groupFile">
-            <label id="fileLabel">选择文件</label>
-            <input type="file" id="resFile" class="form-input">
-        </div>
-        <div class="form-group dynamic-input" id="groupText" style="display: none;">
-            <label id="textLabel">内容</label>
-            <input type="text" id="resTextInput" class="form-input" placeholder="https://..." style="display:none;">
-            <textarea id="resTextArea" class="form-input" rows="6" placeholder="在此输入内容..." style="font-family: monospace;"></textarea>
-        </div>
-        <div class="form-group dynamic-input" id="groupColor" style="display: none;">
-            <label>选择颜色</label>
-            <div style="display:flex; align-items:center; gap:10px;">
-                <input type="color" id="resColorInput" style="width:50px; height:40px; border:none; padding:0;">
-                <span id="resColorValue" style="font-family:monospace; font-weight:bold;">#000000</span>
-            </div>
-        </div>
-        <div class="modal-actions">
-            <button class="btn-secondary" onclick="app.ui.closeModal('resModal')">取消</button>
-            <button class="btn-primary" onclick="app.data.saveResource()">保存</button>
-        </div>
+        <div class="form-group"><label>位置 (文件夹)</label><select id="resParentId" class="form-input"><option value="">(根目录)</option></select></div>
+        <div class="form-group"><label>名称</label><input type="text" id="resName" class="form-input" placeholder="输入资源名称"></div>
+        <div class="form-group dynamic-input" id="groupFile"><label id="fileLabel">选择文件</label><input type="file" id="resFile" class="form-input"></div>
+        <div class="form-group dynamic-input" id="groupText" style="display: none;"><label id="textLabel">内容</label><input type="text" id="resTextInput" class="form-input" style="display:none;"><textarea id="resTextArea" class="form-input" rows="6" style="font-family: monospace;"></textarea></div>
+        <div class="form-group dynamic-input" id="groupColor" style="display: none;"><label>选择颜色</label><div style="display:flex; align-items:center; gap:10px;"><input type="color" id="resColorInput" style="width:50px; height:40px; border:none; padding:0;"><span id="resColorValue" style="font-family:monospace; font-weight:bold;">#000000</span></div></div>
+        <div class="modal-actions"><button class="btn-secondary" onclick="app.ui.closeModal('resModal')">取消</button><button class="btn-primary" onclick="app.data.saveResource()">保存</button></div>
     </div>
 </div>
 
-<!-- 节点菜单 -->
 <div class="node-menu" id="nodeMenu" style="display: none;">
-    <div class="form-group">
-        <label>节点名称</label>
-        <input type="text" id="nodeLabel" class="form-input">
-    </div>
-    <div class="form-group">
-        <label>关联资源</label>
-        <select id="nodeResSelect" class="form-input"></select>
-    </div>
-    <div class="menu-actions">
-        <button class="btn-primary small" style="flex:1" onclick="app.data.saveNodeEdit()">保存</button>
-        <button class="btn-danger small" style="flex:1" onclick="app.data.deleteNode()">删除</button>
-    </div>
+    <div class="form-group"><label>节点名称</label><input type="text" id="nodeLabel" class="form-input"></div>
+    <div class="form-group"><label>关联资源</label><select id="nodeResSelect" class="form-input"></select></div>
+    <div class="menu-actions"><button class="btn-primary small" style="flex:1" onclick="app.data.saveNodeEdit()">保存</button><button class="btn-danger small" style="flex:1" onclick="app.data.deleteNode()">删除</button></div>
 </div>
 
 <div class="toast" id="toast"></div>
 
 <script src="js/app.js"></script>
 <script>
-    // 简单的自适应初始化
-    if (window.innerWidth < 768) {
-        document.getElementById('sidebar').classList.add('closed');
-    } else {
-        document.getElementById('sidebar').classList.remove('closed');
+    if (window.innerWidth < 768) document.getElementById('sidebar').classList.add('closed');
+    else document.getElementById('sidebar').classList.remove('closed');
+
+    // [新增] 初始化主题
+    if(localStorage.getItem('theme') === 'dark') {
+        document.body.setAttribute('data-theme', 'dark');
     }
 </script>
 </body>

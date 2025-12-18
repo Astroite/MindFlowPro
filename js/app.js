@@ -1,12 +1,12 @@
 /**
  * MindFlow - App Logic
- * 更新内容：新增移动端双指缩放 (Pinch-to-Zoom) 支持
+ * 更新内容：新增深色模式支持，新增侧边栏资源搜索功能
  */
 
 const app = {
     // --- 配置 ---
     config: {
-        appVersion: '2.0.0',
+        appVersion: '2.1.0',
         nodeRadius: 40, subRadius: 30, linkDistance: 150, chargeStrength: -800, collideRadius: 55,
         dbName: 'MindFlowDB', storeName: 'projects',
         previewDelay: 50
@@ -22,7 +22,8 @@ const app = {
         editingResId: null,
         expandedFolders: new Set(),
         draggedResId: null,
-        fileHandle: null
+        fileHandle: null,
+        searchKeyword: '' // [新增] 搜索关键词
     },
 
     // --- 模块 1: 存储 (Storage) ---
@@ -100,6 +101,8 @@ const app = {
 
                 document.getElementById('projTitleInput').value = proj.name;
                 app.graph.resetCamera(); app.graph.imageCache.clear();
+                app.state.searchKeyword = ''; // 重置搜索
+                document.querySelector('.search-input').value = '';
                 app.ui.renderResourceTree();
                 app.ui.toast(`已加载: ${proj.name}`);
                 app.graph.updateSimulation();
@@ -206,13 +209,8 @@ const app = {
     // --- 模块 2: 图形与物理引擎 (Graph) ---
     graph: {
         canvas: null, ctx: null, width: 0, height: 0,
-        imageCache: new Map(),
-        dragSubject: null,
-        isPanning: false,
-        startPan: {x:0, y:0},
-        // [新增] 双指缩放状态
-        pinchStartDist: null,
-        pinchStartScale: 1,
+        imageCache: new Map(), dragSubject: null, isPanning: false, startPan: {x:0, y:0},
+        pinchStartDist: null, pinchStartScale: 1,
 
         init: function() {
             this.canvas = document.getElementById('mainCanvas');
@@ -373,14 +371,12 @@ const app = {
                 if (menu.style.display !== 'none') menu.style.display = 'none';
                 if (e.target !== canvas) return;
 
-                // [修改] 双指缩放检测
                 if (e.touches && e.touches.length === 2) {
                     const dx = e.touches[0].clientX - e.touches[1].clientX;
                     const dy = e.touches[0].clientY - e.touches[1].clientY;
                     this.pinchStartDist = Math.hypot(dx, dy);
                     this.pinchStartScale = app.state.camera.k;
-                    e.preventDefault();
-                    return;
+                    e.preventDefault(); return;
                 }
 
                 const m = getPos(e);
@@ -400,19 +396,13 @@ const app = {
             };
 
             const handleMove = (e) => {
-                // [修改] 双指缩放逻辑
                 if (e.touches && e.touches.length === 2 && this.pinchStartDist) {
                     const dx = e.touches[0].clientX - e.touches[1].clientX;
                     const dy = e.touches[0].clientY - e.touches[1].clientY;
                     const dist = Math.hypot(dx, dy);
-                    const scaleFactor = dist / this.pinchStartDist;
-
-                    let newScale = this.pinchStartScale * scaleFactor;
-                    newScale = Math.max(0.1, Math.min(5, newScale)); // 限制缩放范围
-                    app.state.camera.k = newScale;
-
-                    e.preventDefault();
-                    return;
+                    let newScale = this.pinchStartScale * (dist / this.pinchStartDist);
+                    app.state.camera.k = Math.max(0.1, Math.min(5, newScale));
+                    e.preventDefault(); return;
                 }
 
                 if (!e.touches) {
@@ -437,11 +427,7 @@ const app = {
             };
 
             const handleEnd = (e) => {
-                // 如果手指抬起后不足2指，重置 pinch 状态
-                if (e.touches && e.touches.length < 2) {
-                    this.pinchStartDist = null;
-                }
-
+                if (e.touches && e.touches.length < 2) this.pinchStartDist = null;
                 if (this.dragSubject) {
                     this.dragSubject.fx = null; this.dragSubject.fy = null;
                     app.state.simulation.alphaTarget(0); this.dragSubject = null;
@@ -661,6 +647,24 @@ const app = {
             });
         },
 
+        // [新增] 切换主题逻辑
+        toggleTheme: function() {
+            const body = document.body;
+            if (body.hasAttribute('data-theme')) {
+                body.removeAttribute('data-theme');
+                localStorage.setItem('theme', 'light');
+            } else {
+                body.setAttribute('data-theme', 'dark');
+                localStorage.setItem('theme', 'dark');
+            }
+        },
+
+        // [新增] 搜索过滤逻辑
+        filterResources: function(keyword) {
+            app.state.searchKeyword = keyword.toLowerCase();
+            this.renderResourceTree();
+        },
+
         dragStart: function(e, id) {
             e.dataTransfer.setData('text/plain', id); e.dataTransfer.effectAllowed = 'move';
             app.state.draggedResId = id; e.target.classList.add('dragging');
@@ -695,12 +699,12 @@ const app = {
             if (res.type === 'image') content = `<img src="${res.content}" style="max-width:100%; max-height:200px; display:block; border-radius:4px;">`;
             else if (res.type === 'md') {
                 const html = marked.parse(res.content);
-                content = `<div class="md-preview" style="background:#f8f9fa; padding:10px; border-radius:4px; max-height:280px; overflow-y:auto;">${html}</div>`;
+                content = `<div class="md-preview" style="background:transparent; padding:4px;">${html}</div>`;
             }
             else if (res.type === 'code') content = `<pre style="font-family:monospace; background:#282c34; color:#abb2bf; padding:10px; border-radius:4px; font-size:12px; overflow:auto;">${this.escapeHtml(res.content)}</pre>`;
             else if (res.type === 'color') content = `<div style="width:100px; height:60px; background-color:${res.content}; border-radius:4px; border:1px solid #ddd; margin-bottom:5px;"></div><div style="text-align:center; font-family:monospace; font-weight:bold;">${res.content}</div>`;
             else if (res.type === 'audio') content = `<audio controls src="${res.content}" style="width:250px;"></audio>`;
-            else if (res.type === 'link') content = `<div style="font-size:12px; color:#555; margin-bottom:8px; word-break:break-all;">${res.content}</div><a href="${res.content}" target="_blank" style="display:block; text-align:center; background:#667eea; color:white; text-decoration:none; padding:6px; border-radius:4px; font-size:12px;">跳转到链接 🔗</a>`;
+            else if (res.type === 'link') content = `<div style="font-size:12px; color:var(--text-sub); margin-bottom:8px; word-break:break-all;">${res.content}</div><a href="${res.content}" target="_blank" style="display:block; text-align:center; background:#667eea; color:white; text-decoration:none; padding:6px; border-radius:4px; font-size:12px;">跳转到链接 🔗</a>`;
 
             this.tooltipEl.innerHTML = content;
             this.tooltipEl.style.display = 'block';
@@ -749,13 +753,26 @@ const app = {
             const resources = app.state.resources;
             if(!resources.length) { container.innerHTML = '<div class="empty-tip">暂无资源<br><small>拖入文件或点击添加</small></div>'; return; }
 
+            const keyword = app.state.searchKeyword;
             const folders = resources.filter(r => r.type === 'folder');
-            const rootFiles = resources.filter(r => !r.parentId && r.type !== 'folder');
+
+            // 搜索逻辑
+            const rootFiles = resources.filter(r => {
+                if (keyword && !r.name.toLowerCase().includes(keyword)) return false;
+                return !r.parentId && r.type !== 'folder';
+            });
+
             let html = '';
 
             folders.forEach(folder => {
-                const isOpen = app.state.expandedFolders.has(folder.id);
+                // 如果有搜索词，只显示包含关键词的文件夹或其内容包含关键词的文件夹
                 const children = resources.filter(r => r.parentId === folder.id && r.type !== 'folder');
+                const matchChildren = children.filter(c => !keyword || c.name.toLowerCase().includes(keyword));
+
+                if (keyword && !folder.name.toLowerCase().includes(keyword) && matchChildren.length === 0) return;
+
+                // 搜索时自动展开文件夹
+                const isOpen = keyword ? true : app.state.expandedFolders.has(folder.id);
 
                 html += `
                     <div class="res-folder ${isOpen?'open':''}" 
@@ -764,23 +781,23 @@ const app = {
                          ondrop="app.ui.drop(event, '${folder.id}')"
                          ondragleave="app.ui.dragLeave(event)">
                         <div class="folder-icon">▶</div>
-                        <div class="res-info"><div class="res-name">${folder.name}</div></div>
+                        <div class="res-info"><div class="res-name">${this.highlightText(folder.name, keyword)}</div></div>
                         <div class="res-actions">
                             <div class="btn-res-action" onclick="event.stopPropagation(); app.data.renameFolder('${folder.id}')" title="重命名">✎</div>
                             <div class="btn-res-action del" onclick="event.stopPropagation(); app.data.deleteResource('${folder.id}')">🗑</div>
                         </div>
                     </div>
                     <div class="folder-children ${isOpen?'open':''}">
-                        ${children.map(child => this.createResItemHtml(child)).join('')}
+                        ${matchChildren.map(child => this.createResItemHtml(child, keyword)).join('')}
                     </div>
                 `;
             });
 
-            rootFiles.forEach(file => { html += this.createResItemHtml(file); });
+            rootFiles.forEach(file => { html += this.createResItemHtml(file, keyword); });
             container.innerHTML = html;
         },
 
-        createResItemHtml: function(r) {
+        createResItemHtml: function(r, keyword) {
             let icon = '🔗';
             if(r.type==='image') icon='🖼️'; else if(r.type==='md') icon='📝'; else if(r.type==='code') icon='💻'; else if(r.type==='color') icon='🎨'; else if(r.type==='audio') icon='🎤';
 
@@ -792,7 +809,7 @@ const app = {
                      onmouseleave="app.ui.hideTooltip()">
                     <div class="res-icon" onclick="app.ui.viewResource('${r.id}')">${icon}</div>
                     <div class="res-info" onclick="app.ui.viewResource('${r.id}')">
-                        <div class="res-name">${r.name}</div>
+                        <div class="res-name">${this.highlightText(r.name, keyword)}</div>
                     </div>
                     <div class="res-actions">
                         <div class="btn-res-action" onclick="app.data.editResource('${r.id}')" title="编辑">✎</div>
@@ -800,6 +817,12 @@ const app = {
                     </div>
                 </div>
             `;
+        },
+
+        highlightText: function(text, keyword) {
+            if (!keyword) return text;
+            const reg = new RegExp(`(${keyword})`, 'gi');
+            return text.replace(reg, '<span class="highlight">$1</span>');
         },
 
         toggleFolder: function(id) {
