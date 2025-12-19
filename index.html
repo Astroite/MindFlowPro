@@ -25,21 +25,17 @@
             <div class="brand">MindFlow</div>
             <div class="project-control">
                 <label for="projSelect"></label><select id="projSelect" class="project-select">
-                    <option value="" disabled selected>正在加载...</option>
-                </select>
+                <option value="" disabled selected>正在加载...</option>
+            </select>
                 <div class="search-box">
                     <span class="search-icon">🔍</span>
-                    <!-- [修改] app.ui.filterResources -->
                     <label>
                         <input type="text" class="search-input" placeholder="搜索资源..." oninput="app.ui.filterResources(this.value)">
                     </label>
                 </div>
                 <div class="btn-group-mini">
-                    <!-- [修改] app.storage.triggerSaveDisk -->
                     <button class="btn-icon" title="导出到本地磁盘" onclick="app.storage.triggerSaveDisk()">💾</button>
-                    <!-- [修改] app.storage.triggerOpenDisk -->
                     <button class="btn-icon" title="从磁盘打开项目" onclick="app.storage.triggerOpenDisk()">📂</button>
-                    <!-- [修改] app.ui.confirmDeleteProject -->
                     <button class="btn-icon danger" title="删除当前项目" onclick="app.ui.confirmDeleteProject()">🗑️</button>
                 </div>
             </div>
@@ -52,16 +48,13 @@
         </div>
 
         <div class="sidebar-footer">
-            <!-- [修改] app.ui.handleCreateFolder -->
             <button class="btn-secondary" style="flex:1;" onclick="app.ui.handleCreateFolder()" title="新建文件夹">📁</button>
-            <!-- [修改] app.ui.openResModal -->
             <button class="btn-primary" style="flex:3;" onclick="app.ui.openResModal()">+ 添加资源</button>
         </div>
     </div>
 
     <div class="main-area">
         <div class="toolbar">
-            <!-- [修改] 指向 app.ui, app.graph, app.storage, app.data -->
             <button class="tool-btn" onclick="app.ui.toggleSidebar()" title="菜单">☰</button>
             <div class="divider"></div>
             <button class="tool-btn primary" onclick="app.graph.addRootNode()" title="添加根节点"><span>🎯 根节点</span></button>
@@ -70,7 +63,6 @@
             <input type="text" id="projTitleInput" class="project-title-input" placeholder="未命名项目" onchange="app.data.renameProject(this.value)" title="点击重命名项目">
             <div class="divider"></div>
             <button class="tool-btn" onclick="app.storage.forceSave()" title="保存到浏览器数据库"><span>☁️ 保存</span></button>
-            <!-- [修改] app.ui.exportImage -->
             <button class="tool-btn" onclick="app.ui.exportImage()" title="导出为图片"><span>📷 导出</span></button>
             <button class="tool-btn danger" onclick="app.graph.clearAll()" title="清空画布"><span>🗑️ 清空</span></button>
             <div class="divider"></div>
@@ -87,43 +79,91 @@
 </div>
 
 <div id="nodeBubble" class="node-bubble-container" style="display: none;">
-    <!-- [修改] app.ui.onBubbleEdit -->
     <button class="bubble-btn action-edit" onclick="app.ui.onBubbleEdit()" title="编辑节点">
         <span style="font-size: 16px;">✏️</span>
     </button>
-    <!-- [修改] app.ui.onBubbleDelete -->
     <button class="bubble-btn action-delete" onclick="app.ui.onBubbleDelete()" title="删除节点">
         <span style="font-size: 16px;">🗑️</span>
     </button>
 </div>
 
-<div class="modal-overlay" id="resModal" style="display: none;">
-    <div class="modal-box">
-        <h3 id="resModalTitle">添加资源</h3>
-        <div class="form-group">
-            <label>类型</label>
-            <label for="resType"></label><select id="resType" class="form-input" onchange="app.ui.toggleResInput()">
-                <option value="image">🖼️ 图片 (Image)</option>
-                <option value="md">📝 文档 (Markdown)</option>
-                <option value="code">💻 代码段 (Code)</option>
-                <option value="color">🎨 色卡 (Palette)</option>
-                <option value="audio">🎤 音频 (Audio)</option>
-                <option value="link">🔗 链接 (Link)</option>
-            </select>
+<!-- [新增] 通用单行输入弹窗 -->
+<div class="modal-overlay" id="inputModal" style="display: none;">
+    <div class="modal-box" style="width: 360px;">
+        <h3 id="inputModalTitle">输入</h3>
+        <div class="form-group" style="margin-top: 20px;">
+            <label for="inputModalValue"></label><input type="text" id="inputModalValue" class="form-input" placeholder="" autocomplete="off">
         </div>
-        <div class="form-group"><label>位置 (文件夹)</label><label for="resParentId"></label><select id="resParentId" class="form-input"><option value="">(根目录)</option></select></div>
-        <div class="form-group"><label>名称</label><label for="resName"></label><input type="text" id="resName" class="form-input" placeholder="输入资源名称"></div>
-        <div class="form-group dynamic-input" id="groupFile"><label id="fileLabel">选择文件</label><input type="file" id="resFile" class="form-input"></div>
-        <div class="form-group dynamic-input" id="groupText" style="display: none;"><label id="textLabel">内容</label><label
-                for="resTextInput"></label><input type="text" id="resTextInput" class="form-input" style="display:none;"><label
-                for="resTextArea"></label><textarea id="resTextArea" class="form-input" rows="6" style="font-family: monospace;"></textarea></div>
-        <div class="form-group dynamic-input" id="groupColor" style="display: none;"><label>选择颜色</label><div style="display:flex; align-items:center; gap:10px;">
-            <label for="resColorInput"></label><input type="color" id="resColorInput" style="width:50px; height:40px; border:none; padding:0;"><span id="resColorValue" style="font-family:monospace; font-weight:bold;">#000000</span></div></div>
         <div class="modal-actions">
-            <!-- [修改] app.ui.closeModal -->
+            <button class="btn-secondary" id="inputModalCancel">取消</button>
+            <button class="btn-primary" id="inputModalConfirm">确定</button>
+        </div>
+    </div>
+</div>
+
+<!-- [修改] 现代化资源添加/编辑弹窗 -->
+<div class="modal-overlay" id="resModal" style="display: none;">
+    <div class="modern-modal">
+        <div class="panel-header">
+            <h3 id="resModalTitle">✨ 添加资源</h3>
+            <button class="close-btn" onclick="app.ui.closeModal('resModal')">×</button>
+        </div>
+
+        <div class="panel-body">
+            <div class="form-group">
+                <label class="panel-label">资源类型</label>
+                <div class="select-wrapper">
+                    <select id="resType" class="form-input panel-select" onchange="app.ui.toggleResInput()">
+                        <option value="image">🖼️ 图片 (Image)</option>
+                        <option value="md">📝 文档 (Markdown)</option>
+                        <option value="code">💻 代码段 (Code)</option>
+                        <option value="color">🎨 色卡 (Palette)</option>
+                        <option value="audio">🎤 音频 (Audio)</option>
+                        <option value="link">🔗 链接 (Link)</option>
+                    </select>
+                    <span class="select-arrow">▼</span>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label class="panel-label">存储位置</label>
+                <div class="select-wrapper">
+                    <select id="resParentId" class="form-input panel-select">
+                        <option value="">(根目录)</option>
+                    </select>
+                    <span class="select-arrow">▼</span>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label class="panel-label">资源名称</label>
+                <input type="text" id="resName" class="form-input panel-input" placeholder="给它起个名字...">
+            </div>
+
+            <!-- 动态内容区域 -->
+            <div class="form-group dynamic-input" id="groupFile">
+                <label class="panel-label" id="fileLabel">选择文件</label>
+                <input type="file" id="resFile" class="form-input panel-input" style="padding: 8px;">
+            </div>
+
+            <div class="form-group dynamic-input" id="groupText" style="display: none;">
+                <label class="panel-label" id="textLabel">内容</label>
+                <input type="text" id="resTextInput" class="form-input panel-input" style="display:none;" placeholder="输入链接地址...">
+                <textarea id="resTextArea" class="form-input panel-input" rows="8" style="font-family: monospace; line-height: 1.5;" placeholder="# Markdown Title..."></textarea>
+            </div>
+
+            <div class="form-group dynamic-input" id="groupColor" style="display: none;">
+                <label class="panel-label">选择颜色</label>
+                <div style="display:flex; align-items:center; gap:12px; background: var(--bg-app); padding: 8px; border-radius: 8px; border: 1px solid var(--border-color);">
+                    <input type="color" id="resColorInput" style="width:40px; height:40px; border:none; padding:0; cursor: pointer; border-radius: 4px;">
+                    <span id="resColorValue" style="font-family:monospace; font-weight:bold; font-size: 16px;">#000000</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel-footer">
             <button class="btn-secondary" onclick="app.ui.closeModal('resModal')">取消</button>
-            <!-- [修改] app.ui.handleSaveResourceClick -->
-            <button class="btn-primary" onclick="app.ui.handleSaveResourceClick()">保存</button>
+            <button class="btn-primary" onclick="app.ui.handleSaveResourceClick()">保存资源</button>
         </div>
     </div>
 </div>
@@ -151,13 +191,11 @@
     </div>
 
     <div class="panel-footer">
-        <!-- [修改] app.ui.handleSaveNodeEdit -->
         <button class="btn-primary full-width" onclick="app.ui.handleSaveNodeEdit()">保存修改</button>
     </div>
 </div>
 
 <div class="toast" id="toast"></div>
-
 
 <script>
     if (window.innerWidth < 768) document.getElementById('sidebar').classList.add('closed');

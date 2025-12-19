@@ -1,21 +1,18 @@
 import { config } from '../config.js';
 
 export class UIModule {
+    // ... existing init and other methods ...
     constructor(app) {
         this.app = app;
         this.tooltipEl = null;
+        this._promptResolve = null;
     }
 
     init() {
-        // 1. 初始化 DOM 引用 (在 app.js 中已经初始化了 app.dom，这里直接用或补充)
-
-        // 2. 初始化 Tooltip
         this.initTooltip();
-
-        // 3. 绑定全局事件
         this.bindGlobalEvents();
+        this.setupInputModal(); // 别忘了这个
 
-        // 4. 注册 EventBus 监听
         this.app.eventBus.on('resources:updated', () => this.renderResourceTree());
         this.app.eventBus.on('nodes:deleted', () => {
             this.app.state.selectedNodes.clear();
@@ -25,6 +22,8 @@ export class UIModule {
         });
         this.app.eventBus.on('toast', (data) => this.toast(data.msg));
     }
+
+    // ... existing initTooltip, setupInputModal, promptUser, bindGlobalEvents, updateSaveStatus, updateProjectSelect ...
 
     initTooltip() {
         this.tooltipEl = document.createElement('div');
@@ -40,11 +39,51 @@ export class UIModule {
         this.tooltipEl.addEventListener('mouseleave', () => this.hideTooltip());
     }
 
+    setupInputModal() {
+        const confirmBtn = document.getElementById('inputModalConfirm');
+        const cancelBtn = document.getElementById('inputModalCancel');
+        const input = document.getElementById('inputModalValue');
+
+        const confirmHandler = () => {
+            if (this._promptResolve) {
+                const val = input.value.trim();
+                this._promptResolve(val || null);
+            }
+            this.closeModal('inputModal');
+            this._promptResolve = null;
+        };
+
+        const cancelHandler = () => {
+            if (this._promptResolve) this._promptResolve(null);
+            this.closeModal('inputModal');
+            this._promptResolve = null;
+        };
+
+        confirmBtn.onclick = confirmHandler;
+        cancelBtn.onclick = cancelHandler;
+
+        input.addEventListener('keyup', (e) => {
+            if (e.key === 'Enter') confirmHandler();
+            if (e.key === 'Escape') cancelHandler();
+        });
+    }
+
+    promptUser(title, placeholder = '', defaultValue = '') {
+        return new Promise((resolve) => {
+            this._promptResolve = resolve;
+            document.getElementById('inputModalTitle').innerText = title;
+            const input = document.getElementById('inputModalValue');
+            input.placeholder = placeholder;
+            input.value = defaultValue;
+            document.getElementById('inputModal').style.display = 'flex';
+            setTimeout(() => input.focus(), 100);
+        });
+    }
+
     bindGlobalEvents() {
-        // 项目选择
         this.app.dom.projSelect.addEventListener('change', async (e) => {
             if (e.target.value === '__new__') {
-                const name = prompt('项目名称:');
+                const name = await this.promptUser('新建项目', '请输入项目名称');
                 if (name) {
                     const id = await this.app.storage.createProject(name);
                     await this.app.storage.loadProject(id);
@@ -56,7 +95,6 @@ export class UIModule {
             }
         });
 
-        // 文件上传处理
         document.getElementById('resFile').addEventListener('change', async (e) => {
             const f = e.target.files[0]; if (!f) return;
             const isImage = f.type.startsWith('image/');
@@ -71,12 +109,10 @@ export class UIModule {
             reader.readAsDataURL(f);
         });
 
-        // 颜色输入联动
         document.getElementById('resColorInput').addEventListener('input', (e) => {
             document.getElementById('resColorValue').innerText = e.target.value;
         });
 
-        // 导入文件
         const impInput = document.getElementById('importInput');
         if (impInput) impInput.addEventListener('change', (e) => {
             if(e.target.files[0]) {
@@ -85,14 +121,11 @@ export class UIModule {
             }
         });
 
-        // 资源列表拖拽代理
         const resList = this.app.dom.resList;
         resList.ondragover = (e) => this.dragOver(e, null);
         resList.ondrop = (e) => this.drop(e, null);
         resList.ondragleave = (e) => this.dragLeave(e);
     }
-
-    // --- 界面渲染与更新 ---
 
     updateSaveStatus(text) {
         if (this.app.dom.saveStatus) this.app.dom.saveStatus.innerText = text;
@@ -103,7 +136,8 @@ export class UIModule {
         let h = `<option value="" disabled ${!this.app.state.currentId?'selected':''}>-- 选择项目 --</option>`;
         h += `<option value="__new__" style="color:#667eea; font-weight:bold;">+ 新建项目</option>`;
         this.app.state.projectsIndex.forEach(p => {
-            h += `<option value="${p.id}" ${p.id===this.app.state.currentId?'selected':''}>📁 ${p.name}</option>`;
+            const isSelected = p.id === this.app.state.currentId ? 'selected' : '';
+            h += `<option value="${p.id}" ${isSelected}>📁 ${p.name}</option>`;
         });
         sel.innerHTML = h;
     }
@@ -134,6 +168,7 @@ export class UIModule {
 
             const isOpen = keyword ? true : this.app.state.expandedFolders.has(folder.id);
 
+            // [新增] 这里的 .btn-add-resource 按钮
             html += `
                 <div class="res-folder ${isOpen?'open':''}" 
                      onclick="app.ui.toggleFolder('${folder.id}')"
@@ -145,6 +180,8 @@ export class UIModule {
                     <div class="folder-icon">▶</div>
                     <div class="res-info"><div class="res-name">${this.highlightText(folder.name, keyword)}</div></div>
                     <div class="res-actions">
+                        <!-- 快速添加资源按钮 -->
+                        <div class="btn-add-resource" onclick="event.stopPropagation(); app.ui.openResModal('New', null, '${folder.id}')" title="在此文件夹添加资源">+</div>
                         <div class="btn-res-action" onclick="event.stopPropagation(); app.ui.handleRenameFolder('${folder.id}')" title="重命名">✎</div>
                         <div class="btn-res-action del" onclick="event.stopPropagation(); app.ui.handleDeleteResource('${folder.id}')" title="删除文件夹">🗑</div>
                     </div>
@@ -187,19 +224,21 @@ export class UIModule {
         return text.replace(reg, '<span class="highlight">$1</span>');
     }
 
-    // --- 用户交互处理 (Handlers) ---
+    // ... handleCreateFolder, handleRenameFolder, handleDeleteResource, handleEditResource ...
 
     handleCreateFolder() {
         if(!this.app.state.currentId) return this.toast('请先创建项目');
-        const name = prompt('文件夹名称:');
-        if(name) this.app.data.createFolder(name);
+        this.promptUser('新建文件夹', '输入文件夹名称').then(name => {
+            if(name) this.app.data.createFolder(name);
+        });
     }
 
     handleRenameFolder(id) {
         const folder = this.app.state.resources.find(r => r.id === id);
         if (!folder) return;
-        const newName = prompt('输入新文件夹名称:', folder.name);
-        if (newName) this.app.data.renameFolder(id, newName);
+        this.promptUser('重命名', '输入新名称', folder.name).then(newName => {
+            if (newName) this.app.data.renameFolder(id, newName);
+        });
     }
 
     handleDeleteResource(id) {
@@ -218,6 +257,48 @@ export class UIModule {
         this.app.state.editingResId = id;
         this.openResModal('Edit', res);
     }
+
+    // [修改] 支持传入 parentId 预选文件夹
+    openResModal(mode, res, preselectParentId = null) {
+        if(!this.app.state.currentId) return this.toast('请先建项目');
+        const title = document.getElementById('resModalTitle');
+        const typeSel = document.getElementById('resType');
+        const parentSel = document.getElementById('resParentId');
+        const nameInput = document.getElementById('resName');
+
+        const folders = this.app.state.resources.filter(r => r.type === 'folder');
+        parentSel.innerHTML = '<option value="">(根目录)</option>' +
+            folders.map(f => `<option value="${f.id}">📁 ${f.name}</option>`).join('');
+
+        this.app.state.tempFileBase64 = null;
+        document.getElementById('resFile').value = '';
+        document.getElementById('resTextInput').value = '';
+        document.getElementById('resTextArea').value = '';
+        document.getElementById('resColorInput').value = '#000000';
+        document.getElementById('resColorValue').innerText = '#000000';
+
+        if (mode === 'Edit' && res) {
+            title.innerText = '✨ 编辑资源';
+            typeSel.value = res.type; typeSel.disabled = true;
+            nameInput.value = res.name;
+            parentSel.value = res.parentId || '';
+
+            if (res.type === 'link') document.getElementById('resTextInput').value = res.content;
+            else if (res.type === 'md' || res.type === 'code') document.getElementById('resTextArea').value = res.content;
+            else if (res.type === 'color') { document.getElementById('resColorInput').value = res.content; document.getElementById('resColorValue').innerText = res.content; }
+        } else {
+            title.innerText = '✨ 添加资源';
+            typeSel.disabled = false; this.app.state.editingResId = null;
+            nameInput.value = ''; typeSel.value = 'image';
+            // 如果点击了文件夹旁边的+号，自动选中该文件夹
+            parentSel.value = preselectParentId || '';
+        }
+
+        this.toggleResInput();
+        document.getElementById('resModal').style.display='flex';
+    }
+
+    // ... existing handleSaveResourceClick, handleSaveNodeEdit, confirmDeleteProject ...
 
     async handleSaveResourceClick() {
         const type = document.getElementById('resType').value;
@@ -269,7 +350,6 @@ export class UIModule {
         if (node) {
             const label = document.getElementById('nodeLabel').value;
             const resId = document.getElementById('nodeResSelect').value || null;
-
             this.app.data.updateNode(node.id, { label, resId });
             document.getElementById('nodeMenu').style.display = 'none';
         }
@@ -281,7 +361,10 @@ export class UIModule {
         }
     }
 
-    // [新增] 主题切换
+    closeModal(id) { document.getElementById(id).style.display='none'; }
+
+    // ... toggleTheme, triggerImport, filterResources, toggleFolder ...
+
     toggleTheme() {
         const body = document.body;
         if (body.hasAttribute('data-theme')) {
@@ -293,12 +376,9 @@ export class UIModule {
         }
     }
 
-    // [新增] 触发导入文件选择框 (供 HTML 或 Storage 调用)
     triggerImport() {
         document.getElementById('importInput').click();
     }
-
-    // --- 交互辅助 ---
 
     filterResources(keyword) {
         this.app.state.searchKeyword = keyword.toLowerCase();
@@ -310,6 +390,8 @@ export class UIModule {
         else this.app.state.expandedFolders.add(id);
         this.renderResourceTree();
     }
+
+    // ... viewResource, openNodeMenu, toggleSidebar, toggleResInput ...
 
     viewResource(id) {
         const res = this.app.state.resources.find(r => r.id === id); if(!res) return;
@@ -326,47 +408,6 @@ export class UIModule {
             else if(res.type==='color') { navigator.clipboard.writeText(res.content); this.toast('色值已复制: '+res.content); }
         }
     }
-
-    // --- 弹窗/菜单 ---
-
-    openResModal(mode, res) {
-        if(!this.app.state.currentId) return this.toast('请先建项目');
-        const title = document.getElementById('resModalTitle');
-        const typeSel = document.getElementById('resType');
-        const parentSel = document.getElementById('resParentId');
-        const nameInput = document.getElementById('resName');
-
-        const folders = this.app.state.resources.filter(r => r.type === 'folder');
-        parentSel.innerHTML = '<option value="">(根目录)</option>' +
-            folders.map(f => `<option value="${f.id}">📁 ${f.name}</option>`).join('');
-
-        this.app.state.tempFileBase64 = null;
-        document.getElementById('resFile').value = '';
-        document.getElementById('resTextInput').value = '';
-        document.getElementById('resTextArea').value = '';
-        document.getElementById('resColorInput').value = '#000000';
-        document.getElementById('resColorValue').innerText = '#000000';
-
-        if (mode === 'Edit' && res) {
-            title.innerText = '编辑资源';
-            typeSel.value = res.type; typeSel.disabled = true;
-            nameInput.value = res.name;
-            parentSel.value = res.parentId || '';
-
-            if (res.type === 'link') document.getElementById('resTextInput').value = res.content;
-            else if (res.type === 'md' || res.type === 'code') document.getElementById('resTextArea').value = res.content;
-            else if (res.type === 'color') { document.getElementById('resColorInput').value = res.content; document.getElementById('resColorValue').innerText = res.content; }
-        } else {
-            title.innerText = '添加资源';
-            typeSel.disabled = false; this.app.state.editingResId = null;
-            nameInput.value = ''; typeSel.value = 'image'; parentSel.value = '';
-        }
-
-        this.toggleResInput();
-        document.getElementById('resModal').style.display='flex';
-    }
-
-    closeModal(id) { document.getElementById(id).style.display='none'; }
 
     openNodeMenu(node, x, y) {
         const m = this.app.dom.nodeMenu;
@@ -420,7 +461,7 @@ export class UIModule {
         }
     }
 
-    // --- 气泡相关 ---
+    // ... showNodeBubble, hideNodeBubble, updateBubblePosition, onBubbleEdit, onBubbleDelete ...
 
     showNodeBubble(node) {
         this.app.state.bubbleNode = node;
@@ -461,13 +502,24 @@ export class UIModule {
     }
 
     onBubbleDelete() {
-        if (!this.app.state.bubbleNode) return;
-        if(confirm('确定要删除这个节点及其连线吗？')) {
-            this.app.data.deleteNodes([this.app.state.bubbleNode.id]);
+        const idsToDelete = new Set();
+        if (this.app.state.bubbleNode) {
+            idsToDelete.add(this.app.state.bubbleNode.id);
+        }
+        this.app.state.selectedNodes.forEach(id => idsToDelete.add(id));
+
+        if (idsToDelete.size === 0) return;
+
+        const confirmMsg = idsToDelete.size > 1
+            ? `确定要删除选中的 ${idsToDelete.size} 个节点吗？`
+            : '确定要删除这个节点及其连线吗？';
+
+        if(confirm(confirmMsg)) {
+            this.app.data.deleteNodes(Array.from(idsToDelete));
         }
     }
 
-    // --- 拖拽相关 ---
+    // ... dragStart, dragOver, dragLeave, drop, showSidebarPreview, displayTooltip, hideTooltip, showTooltip, toast, exportImage ...
 
     dragStart(e, id) {
         e.dataTransfer.setData('text/plain', id); e.dataTransfer.effectAllowed = 'move';

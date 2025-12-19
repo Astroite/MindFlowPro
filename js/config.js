@@ -1,5 +1,5 @@
 export const config = {
-    appVersion: '3.2.0', // 版本号提升
+    appVersion: '3.3.0', // 版本号提升
     nodeRadius: 40,
     subRadius: 30,
     linkDistance: 150,
@@ -8,7 +8,7 @@ export const config = {
     dbName: 'MindFlowDB',
     storeName: 'projects',
     previewDelay: 50,
-    maxImageSizeMB: 2, // 图片上传限制 (MB)
+    maxImageSizeMB: 5, // 图片上传限制 (MB)
     saveDebounceMs: 1000, // 自动保存防抖时间 (ms)
     colors: {
         primary: '#6366f1',

@@ -152,6 +152,7 @@ export class GraphModule {
             let fillColor = config.colors.surface;
             let textColor = config.colors.textMain;
             let hasImg = false;
+            let isColorCard = false;
 
             const res = n.resId ? this.app.state.resources.find(r => r.id === n.resId) : null;
 
@@ -160,22 +161,37 @@ export class GraphModule {
                 textColor = config.colors.textLight;
             }
 
-            if (res && res.type === 'color') { fillColor = res.content; }
+            if (res && res.type === 'color') {
+                fillColor = res.content;
+                isColorCard = true;
+            }
 
-            if (n.type === 'root') {
+            if (n.type === 'root' && !isColorCard) {
                 ctx.shadowColor = 'rgba(0,0,0,0.2)';
                 ctx.shadowBlur = 25 * (n.scale || 1);
                 ctx.shadowOffsetY = 8 * (n.scale || 1);
-            } else {
+            } else if (!isColorCard) {
                 ctx.shadowColor = 'rgba(0,0,0,0.08)';
                 ctx.shadowBlur = 12 * (n.scale || 1);
                 ctx.shadowOffsetY = 4 * (n.scale || 1);
+            } else {
+                // 色卡不使用模糊阴影，或使用更锐利的边框以突显颜色
+                ctx.shadowColor = 'rgba(0,0,0,0.1)';
+                ctx.shadowBlur = 2 * (n.scale || 1);
+                ctx.shadowOffsetY = 1 * (n.scale || 1);
             }
             ctx.shadowOffsetX = 0;
 
             ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
             ctx.fillStyle = fillColor; ctx.fill();
-            ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+
+            // 色卡不显示普通的阴影，避免颜色偏差
+            if (isColorCard) {
+                ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+            } else {
+                // 重置阴影，准备绘制边框或其他内容
+                ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+            }
 
             if (res) {
                 if (res.type === 'image') { this.drawImageInNode(n, res, r); hasImg = true; }
@@ -197,6 +213,9 @@ export class GraphModule {
                 }
             } else if (!res || res.type !== 'color') {
                 ctx.lineWidth = 1.5; ctx.strokeStyle = config.colors.outline; ctx.stroke();
+            } else if (res && res.type === 'color') {
+                // 为色卡添加一个细微的边框，以防颜色太浅看不见
+                ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(0,0,0,0.1)'; ctx.stroke();
             }
 
             if (this.app.state.selectedNodes.has(n.id)) {
@@ -205,11 +224,31 @@ export class GraphModule {
             }
 
             ctx.globalAlpha = n.scale || 1;
-            ctx.fillStyle = textColor;
+
+            // 如果是色卡，需要根据背景亮度自动选择黑/白文字，或者不显示文字避免遮挡
+            // 这里我们选择简单处理：如果是色卡，文字显示在节点下方，或者通过亮度判断
+            // 但为了保持一致性，我们暂时还是显示文字，只是如果颜色太深，文字颜色需要调整
+            // 这里简化逻辑，色卡节点通常文字颜色为 textMain 除非它是 root
+
+            if (isColorCard) {
+                // 简单的亮度判断逻辑可以加在这里，目前暂且使用默认
+                ctx.fillStyle = config.colors.textMain; // 色卡上文字统一用深色，或者根据亮度计算反色
+                // 更高级做法是计算 fillColor 的亮度
+            } else {
+                ctx.fillStyle = textColor;
+            }
+
             ctx.font = `${n.type==='root'?'bold':''} ${12 * (n.scale||1)}px "Segoe UI", sans-serif`;
             ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
             const textY = hasImg ? n.y + r + 15 : (n.resId && !hasImg ? n.y + 15 : n.y);
-            ctx.fillText(n.label, n.x, textY);
+
+            // 色卡的情况下，文字显示在节点下方，避免遮挡颜色
+            if (isColorCard) {
+                ctx.fillText(n.label, n.x, n.y + r + 15);
+            } else {
+                ctx.fillText(n.label, n.x, textY);
+            }
+
             ctx.globalAlpha = 1;
 
             if (n.scale >= 0.9) {
@@ -404,6 +443,4 @@ export class GraphModule {
             this.app.state.camera.k = Math.max(0.1, Math.min(5, this.app.state.camera.k * f));
         });
     }
-
-
 }
