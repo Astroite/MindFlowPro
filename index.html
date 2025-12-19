@@ -5,14 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>MindFlow - 本地化视觉思维导图</title>
 
-    <!-- [修复 1] 引入 Manifest 配置，这是 PWA 安装的身份证 -->
     <link rel="manifest" href="manifest.json">
-
     <link rel="stylesheet" href="css/style.css">
 
     <script src="js/lib/d3.v7.min.js"></script>
     <script src="js/lib/localforage.min.js"></script>
     <script src="js/lib/marked.min.js"></script>
+    <script src="js/lib/purify.min.js"></script>
+
 </head>
 <body>
 
@@ -26,7 +26,6 @@
                 <select id="projSelect" class="project-select">
                     <option value="" disabled selected>正在加载...</option>
                 </select>
-                <!-- [新增] 搜索框 -->
                 <div class="search-box">
                     <span class="search-icon">🔍</span>
                     <input type="text" class="search-input" placeholder="搜索资源..." oninput="app.ui.filterResources(this.value)">
@@ -61,11 +60,9 @@
             <input type="text" id="projTitleInput" class="project-title-input" placeholder="未命名项目" onchange="app.data.renameProject(this.value)" title="点击重命名项目">
             <div class="divider"></div>
             <button class="tool-btn" onclick="app.storage.forceSave()" title="保存到浏览器数据库"><span>☁️ 保存</span></button>
-            <!-- [新增] 导出图片按钮 -->
             <button class="tool-btn" onclick="app.ui.exportImage()" title="导出为图片"><span>📷 导出</span></button>
             <button class="tool-btn danger" onclick="app.graph.clearAll()" title="清空画布"><span>🗑️ 清空</span></button>
             <div class="divider"></div>
-            <!-- [新增] 主题切换按钮 -->
             <button class="tool-btn" onclick="app.ui.toggleTheme()" title="切换深色/浅色模式"><span>🌗</span></button>
             <a href="https://astroite.com/article/2eh5d6so/" target="_blank" class="tool-btn" style="text-decoration: none; color: var(--primary);" title="说明书"><span>❓</span></a>
         </div>
@@ -78,19 +75,15 @@
     </div>
 </div>
 
-<!-- 独立气泡容器：不仅没有背景，而且作为定位基准点 -->
 <div id="nodeBubble" class="node-bubble-container" style="display: none;">
-    <!-- 编辑气泡 -->
     <button class="bubble-btn action-edit" onclick="app.ui.onBubbleEdit()" title="编辑节点">
         <span style="font-size: 16px;">✏️</span>
     </button>
-    <!-- 删除气泡 -->
     <button class="bubble-btn action-delete" onclick="app.ui.onBubbleDelete()" title="删除节点">
         <span style="font-size: 16px;">🗑️</span>
     </button>
 </div>
 
-<!-- 弹窗/菜单 -->
 <div class="modal-overlay" id="resModal" style="display: none;">
     <div class="modal-box">
         <h3 id="resModalTitle">添加资源</h3>
@@ -114,7 +107,6 @@
     </div>
 </div>
 
-<!-- 现代化节点属性面板 -->
 <div class="node-menu modern-panel" id="nodeMenu" style="display: none;">
     <div class="panel-header">
         <h3>✨ 编辑节点</h3>
@@ -149,30 +141,21 @@
     if (window.innerWidth < 768) document.getElementById('sidebar').classList.add('closed');
     else document.getElementById('sidebar').classList.remove('closed');
 
-    // [新增] 初始化主题
     if(localStorage.getItem('theme') === 'dark') {
         document.body.setAttribute('data-theme', 'dark');
     }
 
-    // [修复 2] 注册 Service Worker & 自动刷新逻辑
     if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
             let refreshing = false;
-
-            // 监听 controllerchange 事件：当新的 SW 接管页面时触发
             navigator.serviceWorker.addEventListener('controllerchange', () => {
                 if (refreshing) return;
                 refreshing = true;
-                window.location.reload(); // 强制刷新页面，载入新代码
+                window.location.reload();
             });
-
             navigator.serviceWorker.register('sw.js')
-                .then(registration => {
-                    console.log('SW Registered:', registration.scope);
-                })
-                .catch(err => {
-                    console.log('SW Registration Failed:', err);
-                });
+                .then(registration => { console.log('SW Registered:', registration.scope); })
+                .catch(err => { console.log('SW Registration Failed:', err); });
         });
     }
 </script>

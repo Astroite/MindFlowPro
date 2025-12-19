@@ -1,23 +1,19 @@
 /**
- * MindFlow - App Logic (Optimized & Robust)
- * 版本: 2.7.0
- * * 优化内容：
- * 1. [健壮性] 增加防抖保存 (Debounce Save)，避免频繁 IO。
- * 2. [健壮性] 图片上传增加大小限制和简单的压缩逻辑。
- * 3. [安全性] Markdown 渲染增加基础的 HTML 转义，防止 XSS。
- * 4. [性能] 缓存 DOM 元素引用。
- * 5. [架构] 增加简单的历史记录快照 (Undo/Redo 预留)。
+ * MindFlow - App Logic
+ * 版本: 2.7.1
+ * * 更新内容：
+ * 1. 集成 DOMPurify 进行 Markdown HTML 清洗，防止 XSS。
  */
 
 const app = {
     // --- 配置 ---
     config: {
-        appVersion: '2.7.0',
+        appVersion: '2.7.1',
         nodeRadius: 40, subRadius: 30, linkDistance: 150, chargeStrength: -300, collideRadius: 55,
         dbName: 'MindFlowDB', storeName: 'projects',
         previewDelay: 50,
-        maxImageSizeMB: 2, // 限制图片最大 2MB
-        saveDebounceMs: 1000, // 保存防抖延迟
+        maxImageSizeMB: 2,
+        saveDebounceMs: 1000,
         colors: {
             primary: '#6366f1',
             surface: '#ffffff',
@@ -29,7 +25,7 @@ const app = {
         }
     },
 
-    // --- DOM 缓存 (减少查询开销) ---
+    // --- DOM 缓存 ---
     dom: {},
 
     // --- 全局状态 ---
@@ -49,14 +45,12 @@ const app = {
         fileHandle: null,
         searchKeyword: '',
 
-        // 运行时状态
-        isDirty: false, // 是否有未保存的修改
+        isDirty: false,
         saveTimer: null
     },
 
     // --- 工具函数 ---
     utils: {
-        // 防抖函数
         debounce: (func, wait) => {
             let timeout;
             return function(...args) {
@@ -66,15 +60,19 @@ const app = {
             };
         },
 
-        // 简单的 HTML 转义 (防止 Markdown XSS)
-        sanitizeHTML: (str) => {
-            if (!str) return '';
-            const temp = document.createElement('div');
-            temp.textContent = str;
-            return temp.innerHTML;
+        // [优化] 使用 DOMPurify 清洗 HTML
+        purifyHTML: (html) => {
+            if (!html) return '';
+            // 如果 DOMPurify 存在则使用它（推荐）
+            if (window.DOMPurify) {
+                return DOMPurify.sanitize(html);
+            }
+            // 降级方案：如果没有 DOMPurify，进行简单的脚本剥离（不完美，但比没有好）
+            console.warn('DOMPurify not loaded. Using fallback sanitization.');
+            return html.replace(/<script\b[^>]*>([\s\S]*?)<\/script>/gim, "")
+                .replace(/on\w+="[^"]*"/g, "");
         },
 
-        // 图片压缩 (简单版: 限制最大宽高)
         compressImage: (base64Str, maxWidth = 1024, quality = 0.8) => {
             return new Promise((resolve) => {
                 const img = new Image();
@@ -83,19 +81,17 @@ const app = {
                     const canvas = document.createElement('canvas');
                     let width = img.width;
                     let height = img.height;
-
                     if (width > maxWidth) {
                         height = Math.round((height * maxWidth) / width);
                         width = maxWidth;
                     }
-
                     canvas.width = width;
                     canvas.height = height;
                     const ctx = canvas.getContext('2d');
                     ctx.drawImage(img, 0, 0, width, height);
                     resolve(canvas.toDataURL('image/jpeg', quality));
                 };
-                img.onerror = () => resolve(base64Str); // 失败则返回原图
+                img.onerror = () => resolve(base64Str);
             });
         }
     },
@@ -176,7 +172,6 @@ const app = {
             try {
                 const proj = await localforage.getItem(id);
                 if (!proj) {
-                    // 如果索引还在但数据没了，自动清理索引
                     app.state.projectsIndex = app.state.projectsIndex.filter(p => p.id !== id);
                     await this.saveIndex();
                     app.ui.updateProjectSelect();
@@ -185,7 +180,6 @@ const app = {
 
                 app.state.currentId = id;
                 app.state.fileHandle = null;
-                // 数据防御：确保数组存在
                 app.state.nodes = (proj.nodes || []).map(n => ({...n, scale: 1}));
                 app.state.links = JSON.parse(JSON.stringify(proj.links || []));
                 app.state.resources = (proj.resources || []).map(r => ({ ...r, parentId: r.parentId || null }));
@@ -204,7 +198,6 @@ const app = {
             } catch (e) { app.ui.toast('加载失败: ' + e.message); }
         },
 
-        // 核心：触发保存（带防抖）
         triggerSave: function() {
             if (!app.state.currentId) return;
             app.state.isDirty = true;
@@ -212,17 +205,14 @@ const app = {
             this._debouncedSave();
         },
 
-        // 内部防抖保存逻辑
-        _debouncedSave: null, // 在 init 中初始化
+        _debouncedSave: null,
 
-        // 立即执行保存
         forceSave: async function() {
             if (!app.state.currentId) return app.ui.toast('请先创建或选择项目');
 
             app.ui.updateSaveStatus('保存中...');
             const currentProjName = app.dom.projTitleInput.value || '未命名项目';
 
-            // 简单的数据清洗，移除 d3 模拟产生的多余属性，只保存核心数据
             const cleanNodes = app.state.nodes.map(n => ({
                 id: n.id, type: n.type, x: n.x, y: n.y, label: n.label, resId: n.resId
             }));
@@ -243,8 +233,6 @@ const app = {
                 await localforage.setItem(app.state.currentId, projData);
                 app.state.isDirty = false;
                 app.ui.updateSaveStatus('已保存 ' + new Date().toLocaleTimeString());
-                // 只有手动点击保存按钮时才弹 toast，自动保存不弹
-                // app.ui.toast('保存成功');
             } catch (e) {
                 console.error(e);
                 app.ui.toast('保存失败: 空间不足或数据过大');
@@ -274,7 +262,6 @@ const app = {
                 const text = await file.text();
                 const json = JSON.parse(text);
 
-                // 健壮性检查
                 if (!json.project || !Array.isArray(json.project.nodes)) throw new Error('文件格式无效');
 
                 const newId = await this.importExternalProject(json.project);
@@ -349,13 +336,11 @@ const app = {
 
         exportProjectToFile: async function() {
             if (!app.state.currentId) return app.ui.toast('请先创建项目');
-            // 触发一次强制保存以构建最新数据
             await this.forceSave();
-            // 复用 saveToHandle 逻辑但清空 fileHandle 强制另存为
             const tempHandle = app.state.fileHandle;
             app.state.fileHandle = null;
             await this.saveToHandle();
-            app.state.fileHandle = tempHandle; // 恢复
+            app.state.fileHandle = tempHandle;
         }
     },
 
@@ -377,7 +362,7 @@ const app = {
                 .force("collide", d3.forceCollide().radius(d => d.type === 'root' ? app.config.collideRadius * 1.5 : app.config.collideRadius))
                 .force("x", d3.forceX(0).strength(0.01))
                 .force("y", d3.forceY(0).strength(0.01))
-                .on("tick", () => {}); // Tick logic empty, using requestAnimationFrame
+                .on("tick", () => {});
 
             this.bindEvents();
             requestAnimationFrame(() => this.renderLoop());
@@ -402,7 +387,6 @@ const app = {
 
         isNodeVisible: function(node, padding = 100) {
             const cam = app.state.camera;
-            // 简单剔除不可见节点优化性能
             const r = (node.type === 'root' ? app.config.nodeRadius : app.config.subRadius) * (node.scale || 1);
             const screenX = node.x * cam.k + cam.x;
             const screenY = node.y * cam.k + cam.y;
@@ -472,14 +456,12 @@ const app = {
             ctx.translate(cam.x, cam.y);
             ctx.scale(cam.k, cam.k);
 
-            // 绘制连线
             ctx.beginPath();
             ctx.strokeStyle = app.config.colors.link;
             ctx.lineWidth = 1.5;
             app.state.links.forEach(l => {
                 const s = l.source, t = l.target;
                 if (s.x && t.x) {
-                    // 简单的视锥剔除连线 (优化)
                     if (this.isNodeVisible(s, 500) || this.isNodeVisible(t, 500)) {
                         ctx.moveTo(s.x, s.y);
                         ctx.lineTo(t.x, t.y);
@@ -488,7 +470,6 @@ const app = {
             });
             ctx.stroke();
 
-            // 绘制节点
             app.state.nodes.forEach(n => {
                 if (!this.isNodeVisible(n)) return;
 
@@ -509,7 +490,6 @@ const app = {
 
                 if (res && res.type === 'color') { fillColor = res.content; }
 
-                // 阴影
                 if (n.type === 'root') {
                     ctx.shadowColor = 'rgba(0,0,0,0.2)';
                     ctx.shadowBlur = 25 * (n.scale || 1);
@@ -581,7 +561,6 @@ const app = {
             if (!img) {
                 img = new Image();
                 img.src = res.content;
-                // 设置标志避免重复加载
                 this.imageCache.set(res.id, { loaded: false, obj: img });
                 img.onload = () => {
                     this.imageCache.set(res.id, { loaded: true, obj: img, width: img.width, height: img.height });
@@ -602,7 +581,6 @@ const app = {
 
         bindEvents: function() {
             const canvas = this.canvas;
-            // 坐标转换
             const getPos = (e) => {
                 const rect = canvas.getBoundingClientRect();
                 const k = app.state.camera.k;
@@ -649,7 +627,6 @@ const app = {
 
                 const m = getPos(e);
                 let hitNode = null;
-                // 倒序查找，优先点击上层节点
                 for (let i = app.state.nodes.length - 1; i >= 0; i--) {
                     const n = app.state.nodes[i];
                     const r = (n.type === 'root' ? app.config.nodeRadius : app.config.subRadius) * (n.scale || 1);
@@ -736,7 +713,6 @@ const app = {
                     if (app.state.selectedNodes.size === 1 && app.state.selectedNodes.has(this.dragSubject.id)) {
                         app.ui.showNodeBubble(this.dragSubject);
                     }
-                    // 拖拽结束时触发保存
                     app.storage.triggerSave();
                     this.dragSubject = null;
                 }
@@ -810,7 +786,6 @@ const app = {
             let content = null;
             if (type === 'image') {
                 if (app.state.tempFileBase64) {
-                    // 图片压缩处理
                     app.ui.toast('正在处理图片...');
                     content = await app.utils.compressImage(app.state.tempFileBase64);
                 } else if (app.state.editingResId) {
@@ -973,7 +948,6 @@ const app = {
         tooltipEl: null,
 
         init: function() {
-            // 缓存 DOM 引用
             app.dom.resList = document.getElementById('resList');
             app.dom.projSelect = document.getElementById('projSelect');
             app.dom.projTitleInput = document.getElementById('projTitleInput');
@@ -984,7 +958,6 @@ const app = {
             app.dom.nodeBubble = document.getElementById('nodeBubble');
             app.dom.toast = document.getElementById('toast');
 
-            // 初始化防抖函数
             app.storage._debouncedSave = app.utils.debounce(app.storage.forceSave, app.config.saveDebounceMs);
 
             this.tooltipEl = document.createElement('div');
@@ -1010,7 +983,6 @@ const app = {
             document.getElementById('resFile').addEventListener('change', (e) => {
                 const f = e.target.files[0]; if (!f) return;
 
-                // 检查图片大小
                 const isImage = f.type.startsWith('image/');
                 if (isImage && f.size > app.config.maxImageSizeMB * 1024 * 1024) {
                     if (!confirm(`图片超过 ${app.config.maxImageSizeMB}MB，将自动压缩，是否继续？`)) {
@@ -1038,11 +1010,9 @@ const app = {
             if (app.dom.saveStatus) app.dom.saveStatus.innerText = text;
         },
 
-        // [新增] 导出为高清图片功能
         exportImage: function() {
             if (app.state.nodes.length === 0) return this.toast('画布为空');
 
-            // 1. 计算包围盒
             let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
             app.state.nodes.forEach(n => {
                 const r = (n.type === 'root' ? app.config.nodeRadius : app.config.subRadius) * (n.scale || 1);
@@ -1056,13 +1026,11 @@ const app = {
             const width = maxX - minX + padding * 2;
             const height = maxY - minY + padding * 2;
 
-            // 2. 创建 Canvas
             const canvas = document.createElement('canvas');
             canvas.width = width;
             canvas.height = height;
             const ctx = canvas.getContext('2d');
 
-            // 3. 背景
             const isDark = document.body.getAttribute('data-theme') === 'dark';
             ctx.fillStyle = isDark ? '#18181b' : '#f3f3f3';
             ctx.fillRect(0, 0, width, height);
@@ -1070,7 +1038,6 @@ const app = {
             ctx.save();
             ctx.translate(-minX + padding, -minY + padding);
 
-            // 4. 绘制连线
             ctx.beginPath();
             ctx.strokeStyle = app.config.colors.link;
             ctx.lineWidth = 1.5;
@@ -1083,7 +1050,6 @@ const app = {
             });
             ctx.stroke();
 
-            // 5. 绘制节点 (这里逻辑与 renderLoop 重复，可抽取，但为了导出高清图单独保留也好)
             app.state.nodes.forEach(n => {
                 const r = (n.type === 'root' ? app.config.nodeRadius : app.config.subRadius) * (n.scale || 1);
 
@@ -1150,7 +1116,6 @@ const app = {
 
             ctx.restore();
 
-            // 6. 导出
             const link = document.createElement('a');
             link.download = `MindFlow_${Date.now()}.png`;
             link.href = canvas.toDataURL('image/png');
@@ -1254,11 +1219,9 @@ const app = {
             let content = '';
             if (res.type === 'image') content = `<img src="${res.content}" style="max-width:100%; max-height:200px; display:block; border-radius:4px;">`;
             else if (res.type === 'md') {
-                // [安全] 简单的 Markdown 清洗渲染
+                // 使用 DOMPurify 清洗 Markdown 生成的 HTML
                 let html = marked.parse(res.content);
-                // 仅供演示，生产环境建议使用 DOMPurify.sanitize(html)
-                // 这里我们至少禁用了 script 标签的简单注入
-                if (html.includes('<script')) html = html.replace(/<script/g, '&lt;script');
+                html = app.utils.purifyHTML(html); // [修改] 调用 purifyHTML
                 content = `<div class="md-preview" style="background:#f8f9fa; padding:10px; border-radius:4px; max-height:280px; overflow-y:auto;">${html}</div>`;
             }
             else if (res.type === 'code') content = `<pre style="font-family:monospace; background:#282c34; color:#abb2bf; padding:10px; border-radius:4px; font-size:12px; overflow:auto;">${this.escapeHtml(res.content)}</pre>`;
@@ -1501,7 +1464,7 @@ const app = {
     },
 
     init: async function() {
-        this.ui.init(); // 优先初始化 UI 缓存 DOM
+        this.ui.init();
         await this.storage.init();
         this.graph.init();
         console.log("MindFlow Ready.");
