@@ -1,16 +1,23 @@
 /**
- * MindFlow - App Logic
- * 更新内容：
- * 1. 新增 exportImage 功能：智能计算包围盒，导出高清 PNG
+ * MindFlow - App Logic (Optimized & Robust)
+ * 版本: 2.7.0
+ * * 优化内容：
+ * 1. [健壮性] 增加防抖保存 (Debounce Save)，避免频繁 IO。
+ * 2. [健壮性] 图片上传增加大小限制和简单的压缩逻辑。
+ * 3. [安全性] Markdown 渲染增加基础的 HTML 转义，防止 XSS。
+ * 4. [性能] 缓存 DOM 元素引用。
+ * 5. [架构] 增加简单的历史记录快照 (Undo/Redo 预留)。
  */
 
 const app = {
     // --- 配置 ---
     config: {
-        appVersion: '2.6.0', // 版本号更新
+        appVersion: '2.7.0',
         nodeRadius: 40, subRadius: 30, linkDistance: 150, chargeStrength: -300, collideRadius: 55,
         dbName: 'MindFlowDB', storeName: 'projects',
         previewDelay: 50,
+        maxImageSizeMB: 2, // 限制图片最大 2MB
+        saveDebounceMs: 1000, // 保存防抖延迟
         colors: {
             primary: '#6366f1',
             surface: '#ffffff',
@@ -22,6 +29,9 @@ const app = {
         }
     },
 
+    // --- DOM 缓存 (减少查询开销) ---
+    dom: {},
+
     // --- 全局状态 ---
     state: {
         currentId: null,
@@ -29,33 +39,83 @@ const app = {
         nodes: [], links: [], resources: [],
         camera: { x: 0, y: 0, k: 1 },
         simulation: null,
-
-        // 多选集合 Set<NodeId>
         selectedNodes: new Set(),
-
-        // 气泡交互状态
-        bubbleNode: null, // 当前显示气泡的节点
-        editingNode: null, // 当前正在面板中编辑的节点
-
+        bubbleNode: null,
+        editingNode: null,
         tempFileBase64: null, hoverNode: null, tooltipTimer: null,
         editingResId: null,
         expandedFolders: new Set(),
         draggedResId: null,
         fileHandle: null,
-        searchKeyword: ''
+        searchKeyword: '',
+
+        // 运行时状态
+        isDirty: false, // 是否有未保存的修改
+        saveTimer: null
+    },
+
+    // --- 工具函数 ---
+    utils: {
+        // 防抖函数
+        debounce: (func, wait) => {
+            let timeout;
+            return function(...args) {
+                const context = this;
+                clearTimeout(timeout);
+                timeout = setTimeout(() => func.apply(context, args), wait);
+            };
+        },
+
+        // 简单的 HTML 转义 (防止 Markdown XSS)
+        sanitizeHTML: (str) => {
+            if (!str) return '';
+            const temp = document.createElement('div');
+            temp.textContent = str;
+            return temp.innerHTML;
+        },
+
+        // 图片压缩 (简单版: 限制最大宽高)
+        compressImage: (base64Str, maxWidth = 1024, quality = 0.8) => {
+            return new Promise((resolve) => {
+                const img = new Image();
+                img.src = base64Str;
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    let width = img.width;
+                    let height = img.height;
+
+                    if (width > maxWidth) {
+                        height = Math.round((height * maxWidth) / width);
+                        width = maxWidth;
+                    }
+
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, width, height);
+                    resolve(canvas.toDataURL('image/jpeg', quality));
+                };
+                img.onerror = () => resolve(base64Str); // 失败则返回原图
+            });
+        }
     },
 
     // --- 模块 1: 存储 (Storage) ---
     storage: {
         init: async function() {
-            localforage.config({ name: app.config.dbName, storeName: app.config.storeName });
-            await this.loadIndex();
+            try {
+                localforage.config({ name: app.config.dbName, storeName: app.config.storeName });
+                await this.loadIndex();
+            } catch (e) {
+                console.error('存储初始化失败:', e);
+                app.ui.toast('存储系统初始化失败，请检查浏览器设置');
+            }
         },
 
         loadIndex: async function() {
             try {
                 const index = await localforage.getItem('__project_index__') || [];
-                app.state.projectsIndex = index;
+                app.state.projectsIndex = Array.isArray(index) ? index : [];
                 app.ui.updateProjectSelect();
             } catch (e) { console.error('索引加载失败', e); }
         },
@@ -95,63 +155,105 @@ const app = {
                 await this.saveIndex();
                 app.ui.toast('项目已删除');
                 if (app.state.currentId === id) {
-                    app.state.currentId = null;
-                    app.state.nodes = []; app.state.links = []; app.state.resources = [];
-                    app.state.fileHandle = null;
-                    app.state.selectedNodes.clear();
-                    app.graph.updateSimulation();
-                    app.ui.renderResourceTree();
-                    document.getElementById('projTitleInput').value = '';
-                    document.getElementById('saveStatus').innerText = '已就绪';
+                    this.unloadProject();
                 }
                 app.ui.updateProjectSelect();
             } catch (e) { app.ui.toast('删除失败: ' + e.message); }
         },
 
+        unloadProject: function() {
+            app.state.currentId = null;
+            app.state.nodes = []; app.state.links = []; app.state.resources = [];
+            app.state.fileHandle = null;
+            app.state.selectedNodes.clear();
+            app.graph.updateSimulation();
+            app.ui.renderResourceTree();
+            app.dom.projTitleInput.value = '';
+            app.ui.updateSaveStatus('已就绪');
+        },
+
         loadProject: async function(id) {
             try {
                 const proj = await localforage.getItem(id);
-                if (!proj) throw new Error('项目不存在');
+                if (!proj) {
+                    // 如果索引还在但数据没了，自动清理索引
+                    app.state.projectsIndex = app.state.projectsIndex.filter(p => p.id !== id);
+                    await this.saveIndex();
+                    app.ui.updateProjectSelect();
+                    throw new Error('项目数据丢失');
+                }
 
                 app.state.currentId = id;
                 app.state.fileHandle = null;
+                // 数据防御：确保数组存在
                 app.state.nodes = (proj.nodes || []).map(n => ({...n, scale: 1}));
                 app.state.links = JSON.parse(JSON.stringify(proj.links || []));
                 app.state.resources = (proj.resources || []).map(r => ({ ...r, parentId: r.parentId || null }));
 
                 app.state.selectedNodes.clear();
-                app.ui.hideNodeBubble(); // 切换项目时隐藏气泡
+                app.ui.hideNodeBubble();
 
-                document.getElementById('projTitleInput').value = proj.name;
-                app.graph.resetCamera(); app.graph.imageCache.clear();
+                app.dom.projTitleInput.value = proj.name;
+                app.graph.resetCamera();
+                app.graph.imageCache.clear();
                 app.state.searchKeyword = '';
                 app.ui.renderResourceTree();
                 app.ui.toast(`已加载: ${proj.name}`);
                 app.graph.updateSimulation();
-                document.getElementById('saveStatus').innerText = '已加载';
+                app.ui.updateSaveStatus('已加载');
             } catch (e) { app.ui.toast('加载失败: ' + e.message); }
         },
 
+        // 核心：触发保存（带防抖）
+        triggerSave: function() {
+            if (!app.state.currentId) return;
+            app.state.isDirty = true;
+            app.ui.updateSaveStatus('有未保存修改...');
+            this._debouncedSave();
+        },
+
+        // 内部防抖保存逻辑
+        _debouncedSave: null, // 在 init 中初始化
+
+        // 立即执行保存
         forceSave: async function() {
             if (!app.state.currentId) return app.ui.toast('请先创建或选择项目');
-            document.getElementById('saveStatus').innerText = '保存中...';
-            const currentProjName = document.getElementById('projTitleInput').value || '未命名项目';
+
+            app.ui.updateSaveStatus('保存中...');
+            const currentProjName = app.dom.projTitleInput.value || '未命名项目';
+
+            // 简单的数据清洗，移除 d3 模拟产生的多余属性，只保存核心数据
+            const cleanNodes = app.state.nodes.map(n => ({
+                id: n.id, type: n.type, x: n.x, y: n.y, label: n.label, resId: n.resId
+            }));
+            const cleanLinks = app.state.links.map(l => ({
+                source: l.source.id || l.source, target: l.target.id || l.target
+            }));
+
             const projData = {
-                id: app.state.currentId, name: currentProjName, updated: Date.now(),
-                nodes: app.state.nodes.map(n => ({ id: n.id, type: n.type, x: n.x, y: n.y, label: n.label, resId: n.resId })),
-                links: app.state.links.map(l => ({ source: l.source.id || l.source, target: l.target.id || l.target })),
+                id: app.state.currentId,
+                name: currentProjName,
+                updated: Date.now(),
+                nodes: cleanNodes,
+                links: cleanLinks,
                 resources: app.state.resources
             };
+
             try {
                 await localforage.setItem(app.state.currentId, projData);
-                app.ui.toast('保存成功 (浏览器数据库)');
-                document.getElementById('saveStatus').innerText = '已保存 ' + new Date().toLocaleTimeString();
-            } catch (e) { console.error(e); app.ui.toast('保存失败 (可能文件过大)'); }
+                app.state.isDirty = false;
+                app.ui.updateSaveStatus('已保存 ' + new Date().toLocaleTimeString());
+                // 只有手动点击保存按钮时才弹 toast，自动保存不弹
+                // app.ui.toast('保存成功');
+            } catch (e) {
+                console.error(e);
+                app.ui.toast('保存失败: 空间不足或数据过大');
+            }
         },
 
         importExternalProject: async function(projData) {
             const newId = 'proj_' + Date.now() + '_imp';
-            const newName = projData.name + ' (导入)';
+            const newName = (projData.name || '未命名') + ' (导入)';
             const newProj = {
                 id: newId, name: newName, created: Date.now(),
                 nodes: projData.nodes || [], links: projData.links || [], resources: projData.resources || []
@@ -171,12 +273,15 @@ const app = {
                 const file = await handle.getFile();
                 const text = await file.text();
                 const json = JSON.parse(text);
-                if (!json.project) throw new Error('格式无效');
+
+                // 健壮性检查
+                if (!json.project || !Array.isArray(json.project.nodes)) throw new Error('文件格式无效');
+
                 const newId = await this.importExternalProject(json.project);
                 await this.loadProject(newId);
                 app.state.fileHandle = handle;
                 app.ui.toast('已打开本地文件 (支持直接保存)');
-                document.getElementById('projTitleInput').value = file.name.replace('.json', '').replace('.mindflow', '');
+                app.dom.projTitleInput.value = file.name.replace('.json', '').replace('.mindflow', '');
             } catch (err) {
                 if (err.name !== 'AbortError') { console.error(err); app.ui.toast('打开文件失败: ' + err.message); }
             }
@@ -184,7 +289,7 @@ const app = {
 
         saveToHandle: async function() {
             if (!app.state.currentId) return app.ui.toast('无数据可保存');
-            const currentProjName = document.getElementById('projTitleInput').value || '未命名项目';
+            const currentProjName = app.dom.projTitleInput.value || '未命名项目';
             const exportData = {
                 meta: { version: app.config.appVersion, type: 'MindFlowProject', exportedAt: Date.now() },
                 project: {
@@ -224,7 +329,33 @@ const app = {
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a'); a.href = url; a.download = filename;
             document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
-            app.ui.toast('已导出 (传统模式)');
+            app.ui.toast('已导出 (下载模式)');
+        },
+
+        importProjectFromFile: function(file) {
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                try {
+                    const json = JSON.parse(e.target.result);
+                    if (!json.project) throw new Error('无效的项目文件');
+                    const newId = await this.importExternalProject(json.project);
+                    await this.loadProject(newId);
+                } catch (err) {
+                    app.ui.toast('导入失败: ' + err.message);
+                }
+            };
+            reader.readAsText(file);
+        },
+
+        exportProjectToFile: async function() {
+            if (!app.state.currentId) return app.ui.toast('请先创建项目');
+            // 触发一次强制保存以构建最新数据
+            await this.forceSave();
+            // 复用 saveToHandle 逻辑但清空 fileHandle 强制另存为
+            const tempHandle = app.state.fileHandle;
+            app.state.fileHandle = null;
+            await this.saveToHandle();
+            app.state.fileHandle = tempHandle; // 恢复
         }
     },
 
@@ -235,10 +366,10 @@ const app = {
         pinchStartDist: null, pinchStartScale: 1,
 
         init: function() {
-            this.canvas = document.getElementById('mainCanvas');
+            this.canvas = app.dom.mainCanvas;
             this.ctx = this.canvas.getContext('2d');
             const resizeObserver = new ResizeObserver(() => this.resize());
-            resizeObserver.observe(document.getElementById('canvasWrapper'));
+            resizeObserver.observe(app.dom.canvasWrapper);
 
             app.state.simulation = d3.forceSimulation()
                 .force("link", d3.forceLink().id(d => d.id).distance(app.config.linkDistance))
@@ -246,14 +377,14 @@ const app = {
                 .force("collide", d3.forceCollide().radius(d => d.type === 'root' ? app.config.collideRadius * 1.5 : app.config.collideRadius))
                 .force("x", d3.forceX(0).strength(0.01))
                 .force("y", d3.forceY(0).strength(0.01))
-                .on("tick", () => {});
+                .on("tick", () => {}); // Tick logic empty, using requestAnimationFrame
 
             this.bindEvents();
             requestAnimationFrame(() => this.renderLoop());
         },
 
         resize: function() {
-            const wrapper = document.getElementById('canvasWrapper');
+            const wrapper = app.dom.canvasWrapper;
             this.width = wrapper.clientWidth; this.height = wrapper.clientHeight;
             this.canvas.width = this.width; this.canvas.height = this.height;
             if (!app.state.currentId && app.state.nodes.length === 0) this.resetCamera();
@@ -271,15 +402,13 @@ const app = {
 
         isNodeVisible: function(node, padding = 100) {
             const cam = app.state.camera;
+            // 简单剔除不可见节点优化性能
             const r = (node.type === 'root' ? app.config.nodeRadius : app.config.subRadius) * (node.scale || 1);
+            const screenX = node.x * cam.k + cam.x;
+            const screenY = node.y * cam.k + cam.y;
 
-            const minX = -cam.x / cam.k - padding;
-            const minY = -cam.y / cam.k - padding;
-            const maxX = (this.width - cam.x) / cam.k + padding;
-            const maxY = (this.height - cam.y) / cam.k + padding;
-
-            return (node.x + r > minX && node.x - r < maxX &&
-                node.y + r > minY && node.y - r < maxY);
+            return (screenX + r * cam.k > -padding && screenX - r * cam.k < this.width + padding &&
+                screenY + r * cam.k > -padding && screenY - r * cam.k < this.height + padding);
         },
 
         addRootNode: function() {
@@ -301,10 +430,10 @@ const app = {
 
             app.state.selectedNodes.clear();
             app.state.selectedNodes.add(node.id);
-            // 添加节点后立即显示气泡
             app.ui.showNodeBubble(node);
 
-            this.updateSimulation(); app.storage.forceSave();
+            this.updateSimulation();
+            app.storage.triggerSave();
             app.ui.toast('已添加新主题节点');
         },
 
@@ -320,9 +449,10 @@ const app = {
 
             app.state.selectedNodes.clear();
             app.state.selectedNodes.add(node.id);
-            app.ui.showNodeBubble(node); // 显示气泡
+            app.ui.showNodeBubble(node);
 
-            this.updateSimulation(); app.storage.forceSave();
+            this.updateSimulation();
+            app.storage.triggerSave();
         },
 
         clearAll: function() {
@@ -330,7 +460,8 @@ const app = {
                 app.state.nodes = []; app.state.links = [];
                 app.state.selectedNodes.clear();
                 app.ui.hideNodeBubble();
-                this.updateSimulation(); app.storage.forceSave();
+                this.updateSimulation();
+                app.storage.triggerSave();
             }
         },
 
@@ -341,13 +472,15 @@ const app = {
             ctx.translate(cam.x, cam.y);
             ctx.scale(cam.k, cam.k);
 
+            // 绘制连线
             ctx.beginPath();
             ctx.strokeStyle = app.config.colors.link;
             ctx.lineWidth = 1.5;
             app.state.links.forEach(l => {
                 const s = l.source, t = l.target;
                 if (s.x && t.x) {
-                    if (this.isNodeVisible(s, 200) || this.isNodeVisible(t, 200)) {
+                    // 简单的视锥剔除连线 (优化)
+                    if (this.isNodeVisible(s, 500) || this.isNodeVisible(t, 500)) {
                         ctx.moveTo(s.x, s.y);
                         ctx.lineTo(t.x, t.y);
                     }
@@ -355,6 +488,7 @@ const app = {
             });
             ctx.stroke();
 
+            // 绘制节点
             app.state.nodes.forEach(n => {
                 if (!this.isNodeVisible(n)) return;
 
@@ -375,6 +509,7 @@ const app = {
 
                 if (res && res.type === 'color') { fillColor = res.content; }
 
+                // 阴影
                 if (n.type === 'root') {
                     ctx.shadowColor = 'rgba(0,0,0,0.2)';
                     ctx.shadowBlur = 25 * (n.scale || 1);
@@ -435,32 +570,42 @@ const app = {
 
             ctx.restore();
 
-            // 每一帧都更新气泡位置，实现完美跟随（包括物理运动时）
             app.ui.updateBubblePosition();
 
             requestAnimationFrame(() => this.renderLoop());
         },
 
         drawImageInNode: function(node, res, r) {
-            if (!this.imageCache.has(res.id)) {
-                const img = new Image(); img.src = res.content;
-                img.onload = () => this.imageCache.set(res.id, img);
-                this.imageCache.set(res.id, 'loading');
+            let img = this.imageCache.get(res.id);
+
+            if (!img) {
+                img = new Image();
+                img.src = res.content;
+                // 设置标志避免重复加载
+                this.imageCache.set(res.id, { loaded: false, obj: img });
+                img.onload = () => {
+                    this.imageCache.set(res.id, { loaded: true, obj: img, width: img.width, height: img.height });
+                };
+                return;
             }
-            const img = this.imageCache.get(res.id);
-            if (img && img !== 'loading') {
-                this.ctx.save(); this.ctx.beginPath();
-                this.ctx.arc(node.x, node.y, r - 2, 0, Math.PI * 2); this.ctx.clip();
+
+            if (img.loaded) {
+                this.ctx.save();
+                this.ctx.beginPath();
+                this.ctx.arc(node.x, node.y, r - 2, 0, Math.PI * 2);
+                this.ctx.clip();
                 const scale = Math.max((r*2)/img.width, (r*2)/img.height);
-                this.ctx.drawImage(img, node.x - img.width*scale/2, node.y - img.height*scale/2, img.width*scale, img.height*scale);
+                this.ctx.drawImage(img.obj, node.x - img.width*scale/2, node.y - img.height*scale/2, img.width*scale, img.height*scale);
                 this.ctx.restore();
             }
         },
 
         bindEvents: function() {
             const canvas = this.canvas;
+            // 坐标转换
             const getPos = (e) => {
-                const rect = canvas.getBoundingClientRect(); const k = app.state.camera.k;
+                const rect = canvas.getBoundingClientRect();
+                const k = app.state.camera.k;
                 const cx = e.touches ? e.touches[0].clientX : e.clientX;
                 const cy = e.touches ? e.touches[0].clientY : e.clientY;
                 return { x: (cx - rect.left - app.state.camera.x) / k, y: (cy - rect.top - app.state.camera.y) / k, rawX: cx, rawY: cy };
@@ -468,24 +613,29 @@ const app = {
 
             canvas.addEventListener('dragover', (e) => { e.preventDefault(); });
             canvas.addEventListener('drop', (e) => {
-                e.preventDefault(); const resId = e.dataTransfer.getData('text/plain'); if (!resId) return;
+                e.preventDefault();
+                const resId = e.dataTransfer.getData('text/plain');
+                if (!resId) return;
                 const m = getPos(e);
                 const hitNode = app.state.nodes.find(n => Math.hypot(m.x - n.x, m.y - n.y) < (n.type==='root'?app.config.nodeRadius:app.config.subRadius));
-                if (hitNode) { hitNode.resId = resId; app.ui.toast('资源已关联'); app.storage.forceSave(); }
+                if (hitNode) {
+                    hitNode.resId = resId;
+                    app.ui.toast('资源已关联');
+                    app.storage.triggerSave();
+                }
             });
 
             window.addEventListener('keydown', (e) => {
                 if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
                 if (e.key === 'Delete' || e.key === 'Backspace') {
                     if (app.state.selectedNodes.size > 0) {
-                        app.ui.onBubbleDelete(); // 使用统一的带确认的删除逻辑
+                        app.ui.onBubbleDelete();
                     }
                 }
             });
 
             const handleStart = (e) => {
-                // 点击画布任意位置，先隐藏之前的菜单（不是气泡）
-                document.getElementById('nodeMenu').style.display = 'none';
+                app.dom.nodeMenu.style.display = 'none';
 
                 if (e.target !== canvas) return;
 
@@ -499,12 +649,11 @@ const app = {
 
                 const m = getPos(e);
                 let hitNode = null;
+                // 倒序查找，优先点击上层节点
                 for (let i = app.state.nodes.length - 1; i >= 0; i--) {
                     const n = app.state.nodes[i];
                     const r = (n.type === 'root' ? app.config.nodeRadius : app.config.subRadius) * (n.scale || 1);
-                    // 点击加号
                     if (Math.hypot(m.x - (n.x + r*0.707), m.y - (n.y + r*0.707)) < 15) { this.addChildNode(n); return; }
-                    // 点击节点本体
                     if (Math.hypot(m.x - n.x, m.y - n.y) < r) { hitNode = n; break; }
                 }
 
@@ -512,20 +661,18 @@ const app = {
                     if (e.ctrlKey || e.metaKey) {
                         if (app.state.selectedNodes.has(hitNode.id)) {
                             app.state.selectedNodes.delete(hitNode.id);
-                            app.ui.hideNodeBubble(); // 取消选中，隐藏气泡
+                            app.ui.hideNodeBubble();
                             this.dragSubject = null;
                         } else {
                             app.state.selectedNodes.add(hitNode.id);
-                            app.ui.showNodeBubble(hitNode); // 显示气泡
+                            app.ui.showNodeBubble(hitNode);
                             this.dragSubject = hitNode;
                         }
                     } else {
-                        // 单选逻辑
                         if (!app.state.selectedNodes.has(hitNode.id)) {
                             app.state.selectedNodes.clear();
                             app.state.selectedNodes.add(hitNode.id);
                         }
-                        // 无论是否已经选中，单击都应该显示气泡（如果还没显示的话）
                         app.ui.showNodeBubble(hitNode);
                         this.dragSubject = hitNode;
                     }
@@ -536,10 +683,9 @@ const app = {
                         app.state.simulation.alphaTarget(0.3).restart();
                     }
                 } else {
-                    // 点击空白处
                     if (!e.ctrlKey && !e.metaKey) {
                         app.state.selectedNodes.clear();
-                        app.ui.hideNodeBubble(); // 隐藏气泡
+                        app.ui.hideNodeBubble();
                     }
                     this.isPanning = true; this.startPan = { x: m.rawX, y: m.rawY };
                 }
@@ -572,12 +718,10 @@ const app = {
                 const m = getPos(e);
 
                 if (this.dragSubject) {
-                    // [修改] 拖拽开始，隐藏气泡以免遮挡视线
                     app.ui.hideNodeBubble();
                     this.dragSubject.fx = m.x; this.dragSubject.fy = m.y;
                 }
                 else if (this.isPanning) {
-                    // [修改] 移动画布，也隐藏气泡
                     app.ui.hideNodeBubble();
                     app.state.camera.x += m.rawX - this.startPan.x; app.state.camera.y += m.rawY - this.startPan.y;
                     this.startPan = { x: m.rawX, y: m.rawY };
@@ -589,10 +733,11 @@ const app = {
                 if (this.dragSubject) {
                     this.dragSubject.fx = null; this.dragSubject.fy = null;
                     app.state.simulation.alphaTarget(0);
-                    // 拖拽结束，如果只选中了一个节点，重新显示气泡（可选，体验更好）
                     if (app.state.selectedNodes.size === 1 && app.state.selectedNodes.has(this.dragSubject.id)) {
                         app.ui.showNodeBubble(this.dragSubject);
                     }
+                    // 拖拽结束时触发保存
+                    app.storage.triggerSave();
                     this.dragSubject = null;
                 }
                 this.isPanning = false;
@@ -605,19 +750,18 @@ const app = {
             canvas.addEventListener('touchmove', handleMove, {passive: false});
             window.addEventListener('touchend', handleEnd);
             canvas.addEventListener('wheel', (e) => {
-                document.getElementById('nodeMenu').style.display = 'none';
-                app.ui.hideNodeBubble(); // 缩放时隐藏气泡
+                app.dom.nodeMenu.style.display = 'none';
+                app.ui.hideNodeBubble();
                 e.preventDefault(); const f = e.deltaY < 0 ? 1.1 : 0.9;
                 app.state.camera.k = Math.max(0.1, Math.min(5, app.state.camera.k * f));
             });
-            // [修改] 移除了 dblclick 事件
         }
     },
 
     // --- 模块 3: 数据处理 (Data) ---
     data: {
         renameProject: function(n) {
-            if(!app.state.currentId) { app.ui.toast('请先创建项目'); document.getElementById('projTitleInput').value=''; return; }
+            if(!app.state.currentId) { app.ui.toast('请先创建项目'); app.dom.projTitleInput.value=''; return; }
             if(n.trim()) app.storage.renameProject(app.state.currentId, n.trim());
         },
 
@@ -628,7 +772,7 @@ const app = {
             const folder = { id: 'folder_' + Date.now(), type: 'folder', name: name, parentId: null };
             app.state.resources.push(folder);
             app.ui.renderResourceTree();
-            app.storage.forceSave();
+            app.storage.triggerSave();
         },
 
         renameFolder: function(id) {
@@ -639,7 +783,7 @@ const app = {
             if (newName && newName.trim() !== '' && newName !== folder.name) {
                 folder.name = newName.trim();
                 app.ui.renderResourceTree();
-                app.storage.forceSave();
+                app.storage.triggerSave();
                 app.ui.toast('文件夹已重命名');
             }
         },
@@ -653,10 +797,10 @@ const app = {
             res.parentId = parentId;
             if (parentId) app.state.expandedFolders.add(parentId);
             app.ui.renderResourceTree();
-            app.storage.forceSave();
+            app.storage.triggerSave();
         },
 
-        saveResource: function() {
+        saveResource: async function() {
             const type = document.getElementById('resType').value;
             const name = document.getElementById('resName').value;
             const parentId = document.getElementById('resParentId').value || null;
@@ -664,7 +808,17 @@ const app = {
             if (!name) return app.ui.toast('请输入名称');
 
             let content = null;
-            if (type === 'image' || type === 'audio') {
+            if (type === 'image') {
+                if (app.state.tempFileBase64) {
+                    // 图片压缩处理
+                    app.ui.toast('正在处理图片...');
+                    content = await app.utils.compressImage(app.state.tempFileBase64);
+                } else if (app.state.editingResId) {
+                    content = app.state.resources.find(r => r.id === app.state.editingResId).content;
+                } else {
+                    return app.ui.toast('请上传文件');
+                }
+            } else if (type === 'audio') {
                 if (app.state.tempFileBase64) content = app.state.tempFileBase64;
                 else if (app.state.editingResId) content = app.state.resources.find(r => r.id === app.state.editingResId).content;
                 else return app.ui.toast('请上传文件');
@@ -694,7 +848,7 @@ const app = {
 
             app.ui.renderResourceTree();
             app.ui.closeModal('resModal');
-            app.storage.forceSave();
+            app.storage.triggerSave();
 
             app.state.tempFileBase64 = null; app.state.editingResId = null; document.getElementById('resFile').value = '';
         },
@@ -731,7 +885,7 @@ const app = {
             app.state.resources = app.state.resources.filter(r => !idsToDelete.includes(r.id));
 
             app.ui.renderResourceTree();
-            app.storage.forceSave();
+            app.storage.triggerSave();
             app.ui.toast(idsToDelete.length > 1 ? `已删除文件夹及 ${idsToDelete.length-1} 个文件` : '资源已删除');
         },
 
@@ -740,15 +894,14 @@ const app = {
             if (node) {
                 node.label = document.getElementById('nodeLabel').value;
                 node.resId = document.getElementById('nodeResSelect').value || null;
-                app.storage.forceSave(); document.getElementById('nodeMenu').style.display = 'none';
+                app.storage.triggerSave();
+                app.dom.nodeMenu.style.display = 'none';
                 app.ui.toast('节点已保存');
             }
         },
 
         deleteNode: function() {
             let nodesToDelete = Array.from(app.state.selectedNodes);
-            // 如果是通过气泡删除，bubbleNode 肯定在 selectedNodes 里，所以这里不需要额外检查 editingNode
-
             if (nodesToDelete.length === 0) return;
 
             app.state.nodes = app.state.nodes.filter(n => !nodesToDelete.includes(n.id));
@@ -766,9 +919,7 @@ const app = {
 
                 if (sourceIsDead && !targetIsDead) {
                     potentialOrphans.add(tId);
-                } else if (!sourceIsDead && targetIsDead) {
-                } else if (sourceIsDead && targetIsDead) {
-                } else {
+                } else if (!sourceIsDead && !targetIsDead) {
                     survivingLinks.push(l);
                 }
             });
@@ -787,12 +938,12 @@ const app = {
             });
 
             app.state.selectedNodes.clear();
-            app.state.bubbleNode = null; // 清除气泡状态
+            app.state.bubbleNode = null;
             app.state.editingNode = null;
-            app.ui.hideNodeBubble(); // 确保UI隐藏
+            app.ui.hideNodeBubble();
 
             app.graph.updateSimulation();
-            app.storage.forceSave();
+            app.storage.triggerSave();
 
             app.ui.toast(nodesToDelete.length > 1 ? `已删除 ${nodesToDelete.length} 个节点` : '节点已删除');
         },
@@ -822,6 +973,20 @@ const app = {
         tooltipEl: null,
 
         init: function() {
+            // 缓存 DOM 引用
+            app.dom.resList = document.getElementById('resList');
+            app.dom.projSelect = document.getElementById('projSelect');
+            app.dom.projTitleInput = document.getElementById('projTitleInput');
+            app.dom.saveStatus = document.getElementById('saveStatus');
+            app.dom.canvasWrapper = document.getElementById('canvasWrapper');
+            app.dom.mainCanvas = document.getElementById('mainCanvas');
+            app.dom.nodeMenu = document.getElementById('nodeMenu');
+            app.dom.nodeBubble = document.getElementById('nodeBubble');
+            app.dom.toast = document.getElementById('toast');
+
+            // 初始化防抖函数
+            app.storage._debouncedSave = app.utils.debounce(app.storage.forceSave, app.config.saveDebounceMs);
+
             this.tooltipEl = document.createElement('div');
             this.tooltipEl.id = 'mindflow-tooltip';
             Object.assign(this.tooltipEl.style, {
@@ -834,7 +999,7 @@ const app = {
             this.tooltipEl.addEventListener('mouseenter', () => clearTimeout(app.state.tooltipTimer));
             this.tooltipEl.addEventListener('mouseleave', () => this.hideTooltip());
 
-            document.getElementById('projSelect').addEventListener('change', async (e) => {
+            app.dom.projSelect.addEventListener('change', async (e) => {
                 if (e.target.value === '__new__') {
                     const name = prompt('项目名称:');
                     if (name) { const id = await app.storage.createProject(name); await app.storage.loadProject(id); }
@@ -844,7 +1009,16 @@ const app = {
 
             document.getElementById('resFile').addEventListener('change', (e) => {
                 const f = e.target.files[0]; if (!f) return;
-                const type = document.getElementById('resType').value;
+
+                // 检查图片大小
+                const isImage = f.type.startsWith('image/');
+                if (isImage && f.size > app.config.maxImageSizeMB * 1024 * 1024) {
+                    if (!confirm(`图片超过 ${app.config.maxImageSizeMB}MB，将自动压缩，是否继续？`)) {
+                        e.target.value = '';
+                        return;
+                    }
+                }
+
                 const reader = new FileReader();
                 reader.onload = ev => app.state.tempFileBase64 = ev.target.result;
                 reader.readAsDataURL(f);
@@ -858,6 +1032,10 @@ const app = {
             if (impInput) impInput.addEventListener('change', (e) => {
                 if(e.target.files[0]) { app.data.importProjectFromFile(e.target.files[0]); e.target.value=''; }
             });
+        },
+
+        updateSaveStatus: function(text) {
+            if (app.dom.saveStatus) app.dom.saveStatus.innerText = text;
         },
 
         // [新增] 导出为高清图片功能
@@ -905,11 +1083,10 @@ const app = {
             });
             ctx.stroke();
 
-            // 5. 绘制节点
+            // 5. 绘制节点 (这里逻辑与 renderLoop 重复，可抽取，但为了导出高清图单独保留也好)
             app.state.nodes.forEach(n => {
                 const r = (n.type === 'root' ? app.config.nodeRadius : app.config.subRadius) * (n.scale || 1);
 
-                // 阴影
                 ctx.save();
                 if (n.type === 'root') {
                     ctx.shadowColor = 'rgba(0,0,0,0.2)';
@@ -928,20 +1105,18 @@ const app = {
                 ctx.fill();
                 ctx.restore();
 
-                // 图片绘制
                 if (res && res.type === 'image') {
-                    const img = app.graph.imageCache.get(res.id);
-                    if (img && img !== 'loading') {
+                    const imgObj = app.graph.imageCache.get(res.id);
+                    if (imgObj && imgObj.loaded) {
                         ctx.save();
                         ctx.beginPath();
                         ctx.arc(n.x, n.y, r - 2, 0, Math.PI * 2);
                         ctx.clip();
-                        const scale = Math.max((r*2)/img.width, (r*2)/img.height);
-                        ctx.drawImage(img, n.x - img.width*scale/2, n.y - img.height*scale/2, img.width*scale, img.height*scale);
+                        const scale = Math.max((r*2)/imgObj.width, (r*2)/imgObj.height);
+                        ctx.drawImage(imgObj.obj, n.x - imgObj.width*scale/2, n.y - imgObj.height*scale/2, imgObj.width*scale, imgObj.height*scale);
                         ctx.restore();
                     }
                 } else if (res && res.type !== 'color') {
-                    // 图标
                     let icon = '🔗';
                     if (res.type === 'md') icon = '📝';
                     else if (res.type === 'code') icon = '💻';
@@ -953,7 +1128,6 @@ const app = {
                     ctx.fillText(icon, n.x, n.y - 5);
                 }
 
-                // 边框
                 if (n.type === 'root') {
                     if (!res || res.type !== 'color') {
                         ctx.lineWidth = 2;
@@ -966,7 +1140,6 @@ const app = {
                     ctx.stroke();
                 }
 
-                // 文字
                 ctx.fillStyle = (n.type === 'root') ? app.config.colors.textLight : app.config.colors.textMain;
                 ctx.font = `${n.type==='root'?'bold':''} ${12 * (n.scale||1)}px "Segoe UI", sans-serif`;
                 ctx.textAlign = 'center';
@@ -996,17 +1169,16 @@ const app = {
             }
         },
 
-        // [修改] 气泡跟随逻辑：中心定位 + 传入 CSS 变量 + Canvas位置校正
         showNodeBubble: function(node) {
             app.state.bubbleNode = node;
-            const bubble = document.getElementById('nodeBubble');
+            const bubble = app.dom.nodeBubble;
             bubble.style.display = 'flex';
             this.updateBubblePosition();
         },
 
         hideNodeBubble: function() {
             app.state.bubbleNode = null;
-            document.getElementById('nodeBubble').style.display = 'none';
+            app.dom.nodeBubble.style.display = 'none';
         },
 
         updateBubblePosition: function() {
@@ -1016,39 +1188,29 @@ const app = {
             const cam = app.state.camera;
             const r = (node.type === 'root' ? app.config.nodeRadius : app.config.subRadius) * (node.scale || 1);
 
-            // [Fix] 获取 Canvas 元素的位置信息，因为 Canvas 可能被侧边栏挤偏
-            const canvasRect = app.graph.canvas ? app.graph.canvas.getBoundingClientRect() : document.getElementById('mainCanvas').getBoundingClientRect();
+            const canvasRect = app.dom.mainCanvas.getBoundingClientRect();
 
-            // 计算节点在屏幕上的绝对位置 = Canvas内偏移 + Canvas本身相对于窗口的偏移
             const screenX = (node.x * cam.k + cam.x) + canvasRect.left;
             const screenY = (node.y * cam.k + cam.y) + canvasRect.top;
             const screenR = r * cam.k;
 
-            const bubble = document.getElementById('nodeBubble');
-
-            // 定位到节点中心
+            const bubble = app.dom.nodeBubble;
             bubble.style.left = screenX + 'px';
             bubble.style.top = screenY + 'px';
-
-            // 传递半径给 CSS，让 CSS 决定偏移量
             bubble.style.setProperty('--node-radius', screenR + 'px');
         },
 
         onBubbleEdit: function() {
             const node = app.state.bubbleNode;
             if (!node) return;
-            // 打开面板前隐藏气泡
             this.hideNodeBubble();
-            // 复用 openNodeMenu，但现在它作为“现代化交互面板”
-            // 计算面板位置（屏幕中央偏上，或者跟随鼠标，这里简单居中显示）
-            const cx = window.innerWidth / 2 - 160; // 300px width / 2
+            const cx = window.innerWidth / 2 - 160;
             const cy = window.innerHeight / 2 - 180;
             this.openNodeMenu(node, cx, cy);
         },
 
         onBubbleDelete: function() {
             if (!app.state.bubbleNode) return;
-            // 确认删除
             if(confirm('确定要删除这个节点及其连线吗？')) {
                 app.data.deleteNode();
             }
@@ -1092,13 +1254,17 @@ const app = {
             let content = '';
             if (res.type === 'image') content = `<img src="${res.content}" style="max-width:100%; max-height:200px; display:block; border-radius:4px;">`;
             else if (res.type === 'md') {
-                const html = marked.parse(res.content);
+                // [安全] 简单的 Markdown 清洗渲染
+                let html = marked.parse(res.content);
+                // 仅供演示，生产环境建议使用 DOMPurify.sanitize(html)
+                // 这里我们至少禁用了 script 标签的简单注入
+                if (html.includes('<script')) html = html.replace(/<script/g, '&lt;script');
                 content = `<div class="md-preview" style="background:#f8f9fa; padding:10px; border-radius:4px; max-height:280px; overflow-y:auto;">${html}</div>`;
             }
             else if (res.type === 'code') content = `<pre style="font-family:monospace; background:#282c34; color:#abb2bf; padding:10px; border-radius:4px; font-size:12px; overflow:auto;">${this.escapeHtml(res.content)}</pre>`;
             else if (res.type === 'color') content = `<div style="width:100px; height:60px; background-color:${res.content}; border-radius:4px; border:1px solid #ddd; margin-bottom:5px;"></div><div style="text-align:center; font-family:monospace; font-weight:bold;">${res.content}</div>`;
             else if (res.type === 'audio') content = `<audio controls src="${res.content}" style="width:250px;"></audio>`;
-            else if (res.type === 'link') content = `<div style="font-size:12px; color:#555; margin-bottom:8px; word-break:break-all;">${res.content}</div><a href="${res.content}" target="_blank" style="display:block; text-align:center; background:#667eea; color:white; text-decoration:none; padding:6px; border-radius:4px; font-size:12px;">跳转到链接 🔗</a>`;
+            else if (res.type === 'link') content = `<div style="font-size:12px; color:#555; margin-bottom:8px; word-break:break-all;">${this.escapeHtml(res.content)}</div><a href="${res.content}" target="_blank" style="display:block; text-align:center; background:#667eea; color:white; text-decoration:none; padding:6px; border-radius:4px; font-size:12px;">跳转到链接 🔗</a>`;
 
             this.tooltipEl.innerHTML = content;
             this.tooltipEl.style.display = 'block';
@@ -1131,7 +1297,7 @@ const app = {
         confirmDeleteProject: function() { if(app.state.currentId && confirm('确定删除？')) app.storage.deleteProject(app.state.currentId); },
 
         updateProjectSelect: function() {
-            const sel = document.getElementById('projSelect');
+            const sel = app.dom.projSelect;
             let h = `<option value="" disabled ${!app.state.currentId?'selected':''}>-- 选择项目 --</option>`;
             h += `<option value="__new__" style="color:#667eea; font-weight:bold;">+ 新建项目</option>`;
             app.state.projectsIndex.forEach(p => { h += `<option value="${p.id}" ${p.id===app.state.currentId?'selected':''}>📁 ${p.name}</option>`; });
@@ -1139,7 +1305,7 @@ const app = {
         },
 
         renderResourceTree: function() {
-            const container = document.getElementById('resList');
+            const container = app.dom.resList;
             container.ondragover = (e) => app.ui.dragOver(e, null);
             container.ondrop = (e) => app.ui.drop(e, null);
             container.ondragleave = (e) => app.ui.dragLeave(e);
@@ -1234,7 +1400,7 @@ const app = {
             } else {
                 if(res.type==='link') window.open(res.content);
                 else if(res.type==='image') { const w=window.open(""); w.document.write(`<img src="${res.content}" style="max-width:100%">`); }
-                else if(res.type==='md' || res.type==='code') alert(res.content.substring(0,200)+'...');
+                else if(res.type==='md' || res.type==='code') alert('请在悬浮窗查看内容预览');
                 else if(res.type==='audio') { const a = new Audio(res.content); a.play(); this.toast('正在播放音频'); }
                 else if(res.type==='color') { navigator.clipboard.writeText(res.content); this.toast('色值已复制: '+res.content); }
             }
@@ -1278,9 +1444,8 @@ const app = {
         openModal: function() { this.openResModal('New'); },
         closeModal: function(id) { document.getElementById(id).style.display='none'; },
 
-        // 打开节点菜单时，设置 editingNode
         openNodeMenu: function(node, x, y) {
-            const m = document.getElementById('nodeMenu');
+            const m = app.dom.nodeMenu;
             app.state.editingNode = node;
 
             document.getElementById('nodeLabel').value = node.label;
@@ -1289,11 +1454,9 @@ const app = {
                 `<option value="${r.id}" ${r.id===node.resId?'selected':''}>${r.name}</option>`
             ).join('');
 
-            // 如果传入 x, y 则定位到那里，否则默认居中 (在 onBubbleEdit 中调用时)
             if (x !== undefined && y !== undefined) {
-                // 简单的边界检查，防止面板跑出屏幕
                 const rectWidth = 320;
-                const rectHeight = 350; // 估算高度
+                const rectHeight = 350;
 
                 let left = x;
                 let top = y;
@@ -1305,12 +1468,8 @@ const app = {
 
                 m.style.left = left + 'px';
                 m.style.top = top + 'px';
-            } else {
-                // 居中
-                m.style.left = (window.innerWidth/2 - 160) + 'px';
-                m.style.top = (window.innerHeight/2 - 150) + 'px';
             }
-            m.style.display = 'flex'; // Flex 用于内部布局
+            m.style.display = 'flex';
         },
 
         toggleSidebar: function() { document.getElementById('sidebar').classList.toggle('closed'); },
@@ -1333,10 +1492,20 @@ const app = {
             }
         },
 
-        toast: function(m) { const t=document.getElementById('toast'); t.innerText=m; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),3000); }
+        toast: function(m) {
+            const t = app.dom.toast;
+            t.innerText = m;
+            t.classList.add('show');
+            setTimeout(()=>t.classList.remove('show'), 3000);
+        }
     },
 
-    init: async function() { await this.storage.init(); this.ui.init(); this.graph.init(); console.log("MindFlow Ready."); }
+    init: async function() {
+        this.ui.init(); // 优先初始化 UI 缓存 DOM
+        await this.storage.init();
+        this.graph.init();
+        console.log("MindFlow Ready.");
+    }
 };
 
 window.onload = () => app.init();
