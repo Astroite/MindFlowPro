@@ -1,29 +1,16 @@
 /**
- * MindFlow - App Logic
- * 版本: 2.7.1
- * * 更新内容：
- * 1. 集成 DOMPurify 进行 Markdown HTML 清洗，防止 XSS。
+ * MindFlow - App Logic (Modularized)
+ * 版本: 3.0.0
+ * 架构：ES Modules
  */
 
+import { config } from './config.js';
+import { utils } from './utils.js';
+
 const app = {
-    // --- 配置 ---
-    config: {
-        appVersion: '2.7.1',
-        nodeRadius: 40, subRadius: 30, linkDistance: 150, chargeStrength: -300, collideRadius: 55,
-        dbName: 'MindFlowDB', storeName: 'projects',
-        previewDelay: 50,
-        maxImageSizeMB: 2,
-        saveDebounceMs: 1000,
-        colors: {
-            primary: '#6366f1',
-            surface: '#ffffff',
-            outline: '#e2e8f0',
-            textMain: '#1f2937',
-            textLight: '#ffffff',
-            selection: '#818cf8',
-            link: '#cbd5e1'
-        }
-    },
+    // --- 注入依赖 ---
+    config,
+    utils,
 
     // --- DOM 缓存 ---
     dom: {},
@@ -47,53 +34,6 @@ const app = {
 
         isDirty: false,
         saveTimer: null
-    },
-
-    // --- 工具函数 ---
-    utils: {
-        debounce: (func, wait) => {
-            let timeout;
-            return function(...args) {
-                const context = this;
-                clearTimeout(timeout);
-                timeout = setTimeout(() => func.apply(context, args), wait);
-            };
-        },
-
-        // [优化] 使用 DOMPurify 清洗 HTML
-        purifyHTML: (html) => {
-            if (!html) return '';
-            // 如果 DOMPurify 存在则使用它（推荐）
-            if (window.DOMPurify) {
-                return DOMPurify.sanitize(html);
-            }
-            // 降级方案：如果没有 DOMPurify，进行简单的脚本剥离（不完美，但比没有好）
-            console.warn('DOMPurify not loaded. Using fallback sanitization.');
-            return html.replace(/<script\b[^>]*>([\s\S]*?)<\/script>/gim, "")
-                .replace(/on\w+="[^"]*"/g, "");
-        },
-
-        compressImage: (base64Str, maxWidth = 1024, quality = 0.8) => {
-            return new Promise((resolve) => {
-                const img = new Image();
-                img.src = base64Str;
-                img.onload = () => {
-                    const canvas = document.createElement('canvas');
-                    let width = img.width;
-                    let height = img.height;
-                    if (width > maxWidth) {
-                        height = Math.round((height * maxWidth) / width);
-                        width = maxWidth;
-                    }
-                    canvas.width = width;
-                    canvas.height = height;
-                    const ctx = canvas.getContext('2d');
-                    ctx.drawImage(img, 0, 0, width, height);
-                    resolve(canvas.toDataURL('image/jpeg', quality));
-                };
-                img.onerror = () => resolve(base64Str);
-            });
-        }
     },
 
     // --- 模块 1: 存储 (Storage) ---
@@ -1219,15 +1159,14 @@ const app = {
             let content = '';
             if (res.type === 'image') content = `<img src="${res.content}" style="max-width:100%; max-height:200px; display:block; border-radius:4px;">`;
             else if (res.type === 'md') {
-                // 使用 DOMPurify 清洗 Markdown 生成的 HTML
                 let html = marked.parse(res.content);
-                html = app.utils.purifyHTML(html); // [修改] 调用 purifyHTML
+                html = app.utils.purifyHTML(html);
                 content = `<div class="md-preview" style="background:#f8f9fa; padding:10px; border-radius:4px; max-height:280px; overflow-y:auto;">${html}</div>`;
             }
-            else if (res.type === 'code') content = `<pre style="font-family:monospace; background:#282c34; color:#abb2bf; padding:10px; border-radius:4px; font-size:12px; overflow:auto;">${this.escapeHtml(res.content)}</pre>`;
+            else if (res.type === 'code') content = `<pre style="font-family:monospace; background:#282c34; color:#abb2bf; padding:10px; border-radius:4px; font-size:12px; overflow:auto;">${app.utils.escapeHtml(res.content)}</pre>`;
             else if (res.type === 'color') content = `<div style="width:100px; height:60px; background-color:${res.content}; border-radius:4px; border:1px solid #ddd; margin-bottom:5px;"></div><div style="text-align:center; font-family:monospace; font-weight:bold;">${res.content}</div>`;
             else if (res.type === 'audio') content = `<audio controls src="${res.content}" style="width:250px;"></audio>`;
-            else if (res.type === 'link') content = `<div style="font-size:12px; color:#555; margin-bottom:8px; word-break:break-all;">${this.escapeHtml(res.content)}</div><a href="${res.content}" target="_blank" style="display:block; text-align:center; background:#667eea; color:white; text-decoration:none; padding:6px; border-radius:4px; font-size:12px;">跳转到链接 🔗</a>`;
+            else if (res.type === 'link') content = `<div style="font-size:12px; color:#555; margin-bottom:8px; word-break:break-all;">${app.utils.escapeHtml(res.content)}</div><a href="${res.content}" target="_blank" style="display:block; text-align:center; background:#667eea; color:white; text-decoration:none; padding:6px; border-radius:4px; font-size:12px;">跳转到链接 🔗</a>`;
 
             this.tooltipEl.innerHTML = content;
             this.tooltipEl.style.display = 'block';
@@ -1253,8 +1192,6 @@ const app = {
                 if (this.tooltipEl) this.tooltipEl.style.display = 'none';
             }, app.config.previewDelay);
         },
-
-        escapeHtml: function(text) { if (!text) return ''; return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;"); },
 
         triggerImport: function() { document.getElementById('importInput').click(); },
         confirmDeleteProject: function() { if(app.state.currentId && confirm('确定删除？')) app.storage.deleteProject(app.state.currentId); },
@@ -1471,4 +1408,5 @@ const app = {
     }
 };
 
+window.app = app;
 window.onload = () => app.init();

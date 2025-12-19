@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>MindFlow - 本地化视觉思维导图</title>
 
-    <link rel="manifest" href="manifest.json">
+    <link rel="manifest" href="./manifest.json">
     <link rel="stylesheet" href="css/style.css">
 
     <script src="js/lib/d3.v7.min.js"></script>
@@ -13,6 +13,7 @@
     <script src="js/lib/marked.min.js"></script>
     <script src="js/lib/purify.min.js"></script>
 
+    <script type="module" src="js/app.js"></script>
 </head>
 <body>
 
@@ -136,7 +137,8 @@
 
 <div class="toast" id="toast"></div>
 
-<script src="js/app.js"></script>
+<!-- [修改] 引入类型为 module 的主脚本 -->
+
 <script>
     if (window.innerWidth < 768) document.getElementById('sidebar').classList.add('closed');
     else document.getElementById('sidebar').classList.remove('closed');
