@@ -1,7 +1,7 @@
 // [重要] 每次修改了代码想要发布给用户，必须修改这里的版本号！
 // 比如改为 'mindflow-v1.2', 'mindflow-v1.3' 等
 // [本次更新] 提升版本号，确保浏览器识别到变化
-const CACHE_NAME = 'mindflow-v3.0.0';
+const CACHE_NAME = 'mindflow-v3.2.0';
 
 const ASSETS_TO_CACHE = [
     './',
@@ -12,6 +12,11 @@ const ASSETS_TO_CACHE = [
     './js/app.js',
     './js/config.js',
     './js/utils.js',
+    './js/modules/data.js',
+    './js/modules/eventBus.js',
+    './js/modules/graph.js',
+    './js/modules/storage.js',
+    './js/modules/ui.js',
 
     './js/lib/d3.v7.min.js',
     './js/lib/localforage.min.js',

@@ -404,4 +404,6 @@ export class GraphModule {
             this.app.state.camera.k = Math.max(0.1, Math.min(5, this.app.state.camera.k * f));
         });
     }
+
+
 }

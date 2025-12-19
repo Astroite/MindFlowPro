@@ -1,5 +1,5 @@
 export const config = {
-    appVersion: '3.0.0', // 版本号提升
+    appVersion: '3.2.0', // 版本号提升
     nodeRadius: 40,
     subRadius: 30,
     linkDistance: 150,

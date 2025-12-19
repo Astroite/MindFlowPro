@@ -3,7 +3,6 @@ import { config } from '../config.js';
 export class StorageModule {
     constructor(app) {
         this.app = app;
-        // 防抖保存函数，将在 init 中初始化
         this._debouncedSave = null;
     }
 
@@ -11,7 +10,6 @@ export class StorageModule {
         try {
             localforage.config({ name: config.dbName, storeName: config.storeName });
             await this.loadIndex();
-            // 初始化防抖函数
             this._debouncedSave = this.app.utils.debounce(this.forceSave.bind(this), config.saveDebounceMs);
         } catch (e) {
             console.error('存储初始化失败:', e);
@@ -96,6 +94,11 @@ export class StorageModule {
             this.app.state.nodes = (proj.nodes || []).map(n => ({...n, scale: 1}));
             this.app.state.links = JSON.parse(JSON.stringify(proj.links || []));
             this.app.state.resources = (proj.resources || []).map(r => ({ ...r, parentId: r.parentId || null }));
+
+            // [新增] 加载后立即执行数据清洗/规范化
+            if (this.app.data && this.app.data.normalizeResources) {
+                this.app.data.normalizeResources();
+            }
 
             this.app.state.selectedNodes.clear();
             this.app.ui.hideNodeBubble();
@@ -252,5 +255,21 @@ export class StorageModule {
         this.app.state.fileHandle = null;
         await this.saveToHandle();
         this.app.state.fileHandle = tempHandle;
+    }
+
+    triggerOpenDisk() {
+        if (window.showOpenFilePicker) {
+            this.openFileHandle();
+        } else {
+            this.app.ui.triggerImport();
+        }
+    }
+
+    triggerSaveDisk() {
+        if (window.showSaveFilePicker) {
+            this.saveToHandle();
+        } else {
+            this.exportProjectToFile();
+        }
     }
 }
