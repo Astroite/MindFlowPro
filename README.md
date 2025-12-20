@@ -1,15 +1,15 @@
 # MindFlow - 本地优先的视觉化灵感与资源管理工具
 
-MindFlow 是一个专为创作者、设计师和开发者打造的本地优先 (Local-First) 视觉化思维导图工具。它摒弃了传统的树状结构，采用基于物理引擎的网状布局，帮助你以更直观、更有生命力的方式整理图片、代码、文档和灵感碎片。
-
-🚀 现已全面支持 PWA (Progressive Web App)，可安装至桌面离线使用！
+MindFlow 是一个专为创作者、设计师和开发者打造的本地优先 (Local-First) 视觉化思维导图工具。它摒弃了传统的树状结构，采用基于 D3.js 物理引擎的网状布局，帮助你以更直观、更有生命力的方式整理图片、代码、文档和灵感碎片。
+🚀 v3.2.0 全新架构发布！ 更稳健、更安全、更易扩展。
 
 ## 🌟 核心特性
 
 ### 🧠 物理仿真的无限画布
-* 自动排布：基于 D3.js 力导向算法，节点之间具有物理斥力与牵引力，自动避让不重叠，拖拽手感顺滑自然。
-* 无限层级：支持创建无限的子节点，子节点自动环绕父节点分布，形成有机的思维网络。
-* 自由视图：支持画布无限平移与缩放，既能俯瞰全局，又能通过滚轮缩放关注微小细节。
+* 力导向布局：基于 D3.js 物理引擎，节点之间具有自然的斥力与牵引力，自动避让，拖拽手感顺滑。
+* 无限层级：支持创建无限子节点，子节点自动环绕父节点分布。
+* 自由视图：支持画布无限平移与缩放，滚轮缩放，双指捏合（触屏）。
+* 高清导出：智能计算内容包围盒，一键导出透明背景的高清 PNG 图片。
 
 ### 📂 强大的资源管理系统
 
@@ -32,9 +32,21 @@ MindFlow 不仅仅是导图，更是一个私有的灵感素材库。支持多�
 ### 🔒 极致的数据隐私与安全
 
 * 本地存储 (Local-First)：使用浏览器 IndexedDB 技术，所有数据（包括高达数百MB的图片文件）均存储在您的本地设备中，绝不上传任何服务器，彻底杜绝隐私泄露风险。
-* 直接读写磁盘：集成 File System Access API (Chrome/Edge)，支持直接打开和保存本地的 .mindflow.json 文件。
-* 无缝云同步：将文件保存在 OneDrive/Dropbox/iCloud 目录中，利用网盘自身的同步功能实现跨设备协作。
+* 读写磁盘：集成 File System Access API (Chrome/Edge)，支持直接打开和保存本地的 .mindflow.json 文件。
+* 无缝同步：将文件保存在 OneDrive/Dropbox/iCloud 目录中，利用网盘自身的同步功能实现跨设备协作。
 * 离线可用：基于 Service Worker 技术，断网状态下依然可以全功能使用。
+* XSS防护：集成 DOMPurify，防止恶意脚本注入。
+
+### 🛠️ 技术架构 (v3.0+)
+本项目采用原生 ES Modules 模块化架构，无打包工具依赖，轻量且高性能。
+* Core: js/app.js (入口与组装)
+* Modules:
+  * StorageModule: 封装 IndexedDB (LocalForage) 与文件 IO。
+  * GraphModule: 封装 D3.js 力导向图与 Canvas 渲染循环。
+  * DataModule: 负责数据 CRUD、规范化与自愈逻辑。
+  * UIModule: 负责 DOM 交互、弹窗与事件绑定。
+  * EventBus: 实现模块间的解耦通信。
+
 
 ## 🚀 快速开始
 
@@ -65,22 +77,11 @@ git clone https://github.com/Astroite/MindFlowPro.git
 python -m http.server 8000
 
 # 或者使用 VS Code 的 "Live Server" 插件
-# 或者使用WebStrom，在index.html页面使用调试
+# 或者使用WebStrom，在index.html页面使用调试、
+浏览器访问 http://localhost:8000。
 ```
 
-浏览器访问 http://localhost:8000。
 
-📖 使用说明书
-
-想要了解更详细的操作指南、快捷键列表以及进阶技巧？
-请查阅：👉 MindFlow 电子说明书
-
-## 🛠️ 技术栈
-
-* 核心框架：原生 HTML5 / CSS3 / JavaScript (ES6+) - 无重型框架依赖，极致轻量。
-* 可视化引擎：D3.js (v7) - 强大的数据驱动文档库。
-* 本地存储：LocalForage - 简化的 IndexedDB 操作库。
-* Markdown 渲染：Marked.js - 高效的 Markdown 解析器。
 
 ## 📄 许可证
 MIT License © 2023 MindFlow
