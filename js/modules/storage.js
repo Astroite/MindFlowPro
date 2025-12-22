@@ -38,6 +38,10 @@ export class StorageModule {
         await localforage.setItem(id, newProj);
         this.app.state.projectsIndex.push({ id: id, name: name });
         await this.saveIndex();
+
+        // [修复] 创建后立即刷新下拉列表，确保新项目可见
+        this.app.ui.updateProjectSelect();
+
         this.app.state.fileHandle = null;
         return id;
     }
@@ -60,6 +64,12 @@ export class StorageModule {
             await localforage.removeItem(id);
             this.app.state.projectsIndex = this.app.state.projectsIndex.filter(p => p.id !== id);
             await this.saveIndex();
+
+            // [新增] 如果删除的是最后打开的项目，清除记录
+            if (localStorage.getItem('lastOpenedProjectId') === id) {
+                localStorage.removeItem('lastOpenedProjectId');
+            }
+
             this.app.ui.toast('项目已删除');
             if (this.app.state.currentId === id) {
                 this.unloadProject();
@@ -95,7 +105,6 @@ export class StorageModule {
             this.app.state.links = JSON.parse(JSON.stringify(proj.links || []));
             this.app.state.resources = (proj.resources || []).map(r => ({ ...r, parentId: r.parentId || null }));
 
-            // [新增] 加载后立即执行数据清洗/规范化
             if (this.app.data && this.app.data.normalizeResources) {
                 this.app.data.normalizeResources();
             }
@@ -111,7 +120,17 @@ export class StorageModule {
             this.app.ui.toast(`已加载: ${proj.name}`);
             this.app.graph.updateSimulation();
             this.app.ui.updateSaveStatus('已加载');
+            this.app.ui.updateProjectSelect(); // 确保选中状态正确
+
+            // [新增] 记录最后打开的项目 ID
+            localStorage.setItem('lastOpenedProjectId', id);
+
         } catch (e) { this.app.ui.toast('加载失败: ' + e.message); }
+    }
+
+    // [新增] 获取最后一次打开的项目 ID
+    getLastOpenedProjectId() {
+        return localStorage.getItem('lastOpenedProjectId');
     }
 
     triggerSave() {
@@ -163,6 +182,8 @@ export class StorageModule {
         await localforage.setItem(newId, newProj);
         this.app.state.projectsIndex.push({ id: newId, name: newName });
         await this.saveIndex();
+        // 导入后也要刷新列表
+        this.app.ui.updateProjectSelect();
         return newId;
     }
 

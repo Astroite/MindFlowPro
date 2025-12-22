@@ -79,6 +79,19 @@ const app = {
         await this.storage.init();
         await this.graph.init();
 
+        // [新增] 自动加载上次打开的项目
+        const lastProjId = this.storage.getLastOpenedProjectId();
+        if (lastProjId) {
+            // 检查该 ID 是否依然在索引中存在（防止已被删除）
+            const exists = this.state.projectsIndex.some(p => p.id === lastProjId);
+            if (exists) {
+                await this.storage.loadProject(lastProjId);
+                console.log("Auto-loaded project:", lastProjId);
+            } else {
+                localStorage.removeItem('lastOpenedProjectId');
+            }
+        }
+
         console.log("MindFlow Ready.");
     }
 };

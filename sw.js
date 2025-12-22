@@ -1,7 +1,7 @@
 // [重要] 每次修改了代码想要发布给用户，必须修改这里的版本号！
 // 比如改为 'mindflow-v1.2', 'mindflow-v1.3' 等
 // [本次更新] 提升版本号，确保浏览器识别到变化
-const CACHE_NAME = 'mindflow-v3.3.1';
+const CACHE_NAME = 'mindflow-v3.3.2';
 
 const ASSETS_TO_CACHE = [
     './',
