@@ -1,6 +1,6 @@
 /**
  * MindFlow - App Logic (Fully Modularized Phase 3)
- * 版本: 3.2.0
+ * 版本: 3.4.1
  * 架构：ES Modules + Event Bus + Separation of Concerns
  */
 
@@ -12,6 +12,10 @@ import { GraphModule } from './modules/graph.js';
 import { DataModule } from './modules/data.js';
 import { UIModule } from './modules/ui.js';
 
+// 引入类型定义（不需要在运行时 import，只需在注释中引用）
+/** @typedef {import('./types.js').App} App */
+
+/** @type {App} */
 const app = {
     // --- 注入依赖 ---
     config,
@@ -45,7 +49,13 @@ const app = {
         searchKeyword: '',
 
         isDirty: false,
-        saveTimer: null
+        saveTimer: null,
+
+        // [New] 飞线相关状态
+        showCrossLinks: true,
+        isLinking: false,
+        linkingSourceNode: null,
+        selectedLink: null // 当前选中的连线
     },
 
     init: async function() {
@@ -68,9 +78,13 @@ const app = {
         this.eventBus = new EventBus();
 
         // 注入 this (app) 到所有模块，实现简单的依赖注入
+        // @ts-ignore - 初始化时允许传尚未完全构建的 app
         this.storage = new StorageModule(this);
+        // @ts-ignore
         this.graph = new GraphModule(this);
+        // @ts-ignore
         this.data = new DataModule(this);
+        // @ts-ignore
         this.ui = new UIModule(this);
 
         // 3. 模块初始化
@@ -96,6 +110,8 @@ const app = {
     }
 };
 
-// 全局暴露，确保 HTML 中的 onclick="app.ui.xxx()" 能正常工作
+// 全局暴露
+// @ts-ignore
 window.app = app;
+// @ts-ignore
 window.onload = () => app.init();

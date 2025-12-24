@@ -1,5 +1,5 @@
 export const config = {
-    appVersion: '3.3.2', // 版本号提升
+    appVersion: '3.4.0', // 版本号提升
     nodeRadius: 40,
     subRadius: 30,
     linkDistance: 150,
@@ -17,7 +17,8 @@ export const config = {
         textMain: '#1f2937',
         textLight: '#ffffff',
         selection: '#818cf8',
-        link: '#cbd5e1'
+        link: '#cbd5e1',
+        cross: '#445252'
     },
     colorsDark: {
         primary: '#818cf8',    // 深色模式下稍微亮一点的主色
@@ -26,6 +27,7 @@ export const config = {
         textMain: '#f3f4f6',   // 浅色文字
         textLight: '#1f2937',  // 深色文字（用于浅色背景时）
         selection: '#6366f1',
-        link: '#52525b'
+        link: '#52525b',
+        cross: '#5d7070'
     }
 };
