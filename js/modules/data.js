@@ -1,45 +1,39 @@
 /**
- * Data Module (Robust & Normalized)
+ * Data Module
  * 职责：纯粹的数据操作 (CRUD)。
- * 优化：增加资源格式规范化和脏数据修复能力。
  */
 export class DataModule {
+    /**
+     * @param {import('../types.js').App} app
+     */
     constructor(app) {
         this.app = app;
     }
 
-    // --- 资源工厂与规范化 (Factory & Normalization) ---
+    // --- 资源工厂与规范化 ---
 
-    /**
-     * 创建标准化的资源对象
-     * @param {Object} data - 原始数据
-     * @returns {Object} 标准化后的资源对象
-     */
     _createResourceObject(data) {
         const timestamp = Date.now();
         return {
             id: data.id || `res_${timestamp}_${Math.random().toString(36).substr(2, 9)}`,
+            // @ts-ignore
             type: data.type || 'unknown',
             name: data.name || '未命名资源',
             content: data.content || null,
             parentId: data.parentId || null,
             created: data.created || timestamp,
-            updated: timestamp // 每次保存更新时间
+            updated: timestamp
         };
     }
 
-    /**
-     * 检查并修复资源列表中的脏数据 (Self-Healing)
-     */
+    // 自愈修复
     normalizeResources() {
         let fixedCount = 0;
         this.app.state.resources = this.app.state.resources.map(res => {
-            // 修复 1: 缺少 ID 或 ID 为 null
             if (!res.id) {
                 res.id = `res_${Date.now()}_fix_${Math.random().toString(36).substr(2, 5)}`;
                 fixedCount++;
             }
-            // 修复 2: 确保 parentId 字段存在
             if (res.parentId === undefined) {
                 res.parentId = null;
             }
@@ -48,7 +42,7 @@ export class DataModule {
 
         if (fixedCount > 0) {
             console.warn(`[Data] Auto-fixed ${fixedCount} corrupted resources.`);
-            this.app.storage.triggerSave(); // 保存修复后的数据
+            this.app.storage.triggerSave();
         }
     }
 
@@ -62,7 +56,6 @@ export class DataModule {
             id: 'folder_' + Date.now()
         });
         this.app.state.resources.push(folder);
-
         this._notifyResourceUpdate();
     }
 
@@ -90,27 +83,19 @@ export class DataModule {
         this._notifyResourceUpdate();
     }
 
-    // 添加或更新资源
     saveResource(resourceData) {
-        // resourceData: { id (optional/null), type, name, content, parentId }
-
-        // [修复] 显式分离 id，防止 null id 覆盖新生成的 id
         const { id, ...restData } = resourceData;
 
         if (id) {
-            // --- 更新模式 ---
             const res = this.app.state.resources.find(r => r.id === id);
             if (res) {
-                // 只更新变动的字段
                 Object.assign(res, restData);
                 res.updated = Date.now();
                 this._notifyResourceUpdate('资源已更新');
             } else {
-                // ID 存在但找不到资源？视为新增（极罕见情况）
                 this._addNewResource({ id, ...restData });
             }
         } else {
-            // --- 新增模式 ---
             this._addNewResource(restData);
         }
     }
@@ -168,7 +153,9 @@ export class DataModule {
         const potentialOrphans = new Set();
 
         this.app.state.links.forEach(l => {
+            // @ts-ignore
             const sId = l.source.id || l.source;
+            // @ts-ignore
             const tId = l.target.id || l.target;
 
             const sourceIsDead = deadNodeSet.has(sId);
@@ -184,6 +171,7 @@ export class DataModule {
         this.app.state.links = survivingLinks;
 
         potentialOrphans.forEach(orphanId => {
+            // @ts-ignore
             const hasIncoming = this.app.state.links.some(l => (l.target.id || l.target) === orphanId);
             if (!hasIncoming) {
                 const orphan = this.app.state.nodes.find(n => n.id === orphanId);
@@ -202,9 +190,45 @@ export class DataModule {
         this.app.eventBus.emit('nodes:deleted');
     }
 
-    // --- 项目操作 (代理到 storage) ---
-    // 虽然重构建议 data 模块只管数据，但 renameProject 属于业务逻辑，放在这里或 Storage 都可以。
-    // 为了保持一致性，我们在这里做逻辑校验，然后调用 storage。
+    // --- 连线操作 ---
+
+    addCrossLink(sourceId, targetId) {
+        if (sourceId === targetId) return;
+
+        // 检查是否已存在
+        const exists = this.app.state.links.some(l => {
+            const s = typeof l.source === 'object' ? l.source.id : l.source;
+            const t = typeof l.target === 'object' ? l.target.id : l.target;
+            return (s === sourceId && t === targetId) || (s === targetId && t === sourceId);
+        });
+
+        if (exists) {
+            this.app.eventBus.emit('toast', { msg: '连线已存在' });
+            return;
+        }
+
+        this.app.state.links.push({
+            source: sourceId,
+            target: targetId,
+            type: 'cross'
+        });
+
+        this.app.graph.updateSimulation();
+        this.app.storage.triggerSave();
+        this.app.eventBus.emit('toast', { msg: '飞线已创建' });
+    }
+
+    // [New] 删除飞线
+    deleteLink(link) {
+        if (!link) return;
+        this.app.state.links = this.app.state.links.filter(l => l !== link);
+        this.app.state.selectedLink = null;
+        this.app.graph.updateSimulation();
+        this.app.storage.triggerSave();
+        this.app.eventBus.emit('toast', { msg: '连线已删除' });
+    }
+
+    // --- 项目操作 ---
 
     renameProject(name) {
         if(!this.app.state.currentId) {
@@ -216,7 +240,6 @@ export class DataModule {
         }
     }
 
-    // --- 内部辅助 ---
     _notifyResourceUpdate(toastMsg) {
         this.app.eventBus.emit('resources:updated');
         this.app.storage.triggerSave();

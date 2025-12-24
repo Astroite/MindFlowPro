@@ -1,6 +1,9 @@
 import { config } from '../config.js';
 
 export class StorageModule {
+    /**
+     * @param {import('../types.js').App} app
+     */
     constructor(app) {
         this.app = app;
         this._debouncedSave = null;
@@ -150,7 +153,9 @@ export class StorageModule {
             id: n.id, type: n.type, x: n.x, y: n.y, label: n.label, resId: n.resId
         }));
         const cleanLinks = this.app.state.links.map(l => ({
-            source: l.source.id || l.source, target: l.target.id || l.target
+            source: l.source.id || l.source,
+            target: l.target.id || l.target,
+            type: l.type // [Fix] 保存连线类型，防止飞线变回普通连线
         }));
 
         const projData = {
@@ -217,7 +222,11 @@ export class StorageModule {
             project: {
                 name: currentProjName,
                 nodes: this.app.state.nodes.map(n => ({ id: n.id, type: n.type, x: n.x, y: n.y, label: n.label, resId: n.resId })),
-                links: this.app.state.links.map(l => ({ source: l.source.id || l.source, target: l.target.id || l.target })),
+                links: this.app.state.links.map(l => ({
+                    source: l.source.id || l.source,
+                    target: l.target.id || l.target,
+                    type: l.type // [Fix] 导出文件时同样需要保存类型
+                })),
                 resources: this.app.state.resources
             }
         };

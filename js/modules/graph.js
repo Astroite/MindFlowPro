@@ -1,6 +1,9 @@
 import { config } from '../config.js';
 
 export class GraphModule {
+    /**
+     * @param {import('../types.js').App} app
+     */
     constructor(app) {
         this.app = app;
         this.canvas = null;
@@ -13,6 +16,7 @@ export class GraphModule {
         this.startPan = { x: 0, y: 0 };
         this.pinchStartDist = null;
         this.pinchStartScale = 1;
+        this.mousePos = { x: 0, y: 0 };
     }
 
     init() {
@@ -22,13 +26,19 @@ export class GraphModule {
         const resizeObserver = new ResizeObserver(() => this.resize());
         resizeObserver.observe(this.app.dom.canvasWrapper);
 
+        // 初始化力导向图
         this.app.state.simulation = d3.forceSimulation()
-            .force("link", d3.forceLink().id(d => d.id).distance(config.linkDistance))
+            // 连线力：根据连线类型动态调整强度
+            // [反馈优化] 飞线强度进一步减弱至 0.02，使其更“虚”
+            .force("link", d3.forceLink().id(d => d.id)
+                .distance(d => d.type === 'cross' ? config.linkDistance * 2.5 : config.linkDistance)
+                .strength(d => d.type === 'cross' ? 0.02 : 1)
+            )
             .force("charge", d3.forceManyBody().strength(d => d.type === 'root' ? config.chargeStrength * 3 : config.chargeStrength))
             .force("collide", d3.forceCollide().radius(d => d.type === 'root' ? config.collideRadius * 1.5 : config.collideRadius))
             .force("x", d3.forceX(0).strength(0.01))
             .force("y", d3.forceY(0).strength(0.01))
-            .on("tick", () => {});
+            .on("tick", () => {}); // 渲染逻辑独立于 tick，在 renderLoop 中执行
 
         this.bindEvents();
         this.resize();
@@ -86,30 +96,90 @@ export class GraphModule {
 
     // --- 核心绘制逻辑 ---
 
-    getContrastColor(hexColor) {
-        if (!hexColor || !hexColor.startsWith('#')) return config.colors.textMain;
-        const r = parseInt(hexColor.substr(1, 2), 16);
-        const g = parseInt(hexColor.substr(3, 2), 16);
-        const b = parseInt(hexColor.substr(5, 2), 16);
-        const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
-        return (yiq >= 128) ? '#000000' : '#ffffff';
-    }
-
     drawLink(ctx, link) {
+        if (link.type === 'cross' && !this.app.state.showCrossLinks) return;
+
         const s = link.source, t = link.target;
         if (s && t && !isNaN(s.x) && !isNaN(s.y) && !isNaN(t.x) && !isNaN(t.y)) {
+            ctx.beginPath();
             ctx.moveTo(s.x, s.y);
             ctx.lineTo(t.x, t.y);
+
+            // [New] 选中连线的高亮效果
+            if (this.app.state.selectedLink === link) {
+                ctx.save();
+                ctx.strokeStyle = config.colors.selection; // 使用选中色
+                ctx.lineWidth = 3;
+                ctx.setLineDash(link.type === 'cross' ? [5, 5] : []);
+                ctx.stroke();
+                ctx.restore();
+                return;
+            }
+
+            if (link.type === 'cross') {
+                ctx.save();
+                // 关联节点选中时，飞线变实
+                const isHighlight = this.app.state.selectedNodes.has(s.id) || this.app.state.selectedNodes.has(t.id);
+
+                ctx.setLineDash(isHighlight ? [5, 3] : [3, 5]);
+                ctx.globalAlpha = isHighlight ? 0.8 : 0.4;
+
+                // 绘制线
+                ctx.stroke();
+
+                // 绘制箭头
+                const angle = Math.atan2(t.y - s.y, t.x - s.x);
+                const r = (t.type === 'root' ? config.nodeRadius : config.subRadius) * (t.scale || 1) + 5;
+                const arrowX = t.x - r * Math.cos(angle);
+                const arrowY = t.y - r * Math.sin(angle);
+
+                ctx.beginPath();
+                ctx.moveTo(arrowX, arrowY);
+                ctx.lineTo(arrowX - 10 * Math.cos(angle - Math.PI / 6), arrowY - 10 * Math.sin(angle - Math.PI / 6));
+                ctx.lineTo(arrowX - 10 * Math.cos(angle + Math.PI / 6), arrowY - 10 * Math.sin(angle + Math.PI / 6));
+                ctx.fillStyle = ctx.strokeStyle;
+                ctx.fill();
+
+                ctx.restore();
+            } else {
+                ctx.stroke();
+            }
         }
     }
 
+    drawDragLink(ctx) {
+        if (!this.app.state.isLinking || !this.app.state.linkingSourceNode) return;
+
+        const s = this.app.state.linkingSourceNode;
+        const m = this.mousePos;
+
+        const cam = this.app.state.camera;
+        const worldMouseX = (m.x - cam.x) / cam.k;
+        const worldMouseY = (m.y - cam.y) / cam.k;
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(s.x, s.y);
+        ctx.lineTo(worldMouseX, worldMouseY);
+        ctx.strokeStyle = config.colors.primary;
+        ctx.setLineDash([5, 5]);
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(worldMouseX, worldMouseY, 4 / cam.k, 0, Math.PI * 2);
+        ctx.fillStyle = config.colors.primary;
+        ctx.fill();
+        ctx.restore();
+    }
+
     drawNode(ctx, n) {
+        // ... (保持原样) ...
         if (isNaN(n.x) || isNaN(n.y)) return;
 
         if (typeof n.scale === 'undefined') n.scale = 1;
         if (n.scale < 1) { n.scale += (1 - n.scale) * 0.15; if (n.scale > 0.99) n.scale = 1; }
 
-        // [Fix] 安全获取颜色配置，防止 colorsDark 未定义导致崩溃
         const isDark = document.body.getAttribute('data-theme') === 'dark';
         const themeColors = isDark ? (config.colorsDark || config.colors) : config.colors;
 
@@ -117,15 +187,12 @@ export class GraphModule {
 
         let fillColor = themeColors.surface;
         let textColor = themeColors.textMain;
-        let hasImg = false;
         let isColorCard = false;
 
         const res = n.resId ? this.app.state.resources.find(r => r.id === n.resId) : null;
 
         if (n.type === 'root') {
             fillColor = themeColors.primary;
-            // [Fix] 根节点背景色通常较深，强制使用浅色文字，除非你修改了 primary 颜色
-            // textColor = config.colors.textLight;
         }
 
         if (res && res.type === 'color') {
@@ -149,7 +216,7 @@ export class GraphModule {
         }
         ctx.shadowOffsetX = 0;
 
-        // 2. 绘制节点背景 (色卡白底修正)
+        // 2. 绘制节点背景
         if (isColorCard) {
             ctx.save();
             ctx.beginPath();
@@ -170,7 +237,6 @@ export class GraphModule {
         if (res) {
             if (res.type === 'image') {
                 this.drawImageInNode(ctx, n, res, r);
-                hasImg = true;
             }
             else if (res.type !== 'color') {
                 let icon = '🔗';
@@ -180,7 +246,6 @@ export class GraphModule {
 
                 ctx.fillStyle = (n.type === 'root') ? 'rgba(255,255,255,0.9)' : '#f59e0b';
 
-                // [保留你的修改] 根节点图标更大
                 if (n.type === 'root'){
                     ctx.font = `${36 * n.scale}px Arial`;
                 } else {
@@ -189,7 +254,6 @@ export class GraphModule {
 
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                // [保留你的修改] 图标垂直居中
                 ctx.fillText(icon, n.x, n.y);
             }
         }
@@ -212,7 +276,7 @@ export class GraphModule {
         }
 
         // 5. 选中高亮
-        if (this.app.state.selectedNodes.has(n.id)) {
+        if (this.app.state.selectedNodes.has(n.id) || (this.app.state.isLinking && this.app.state.linkingSourceNode && this.app.state.linkingSourceNode.id === n.id)) {
             ctx.beginPath(); ctx.arc(n.x, n.y, r + 5, 0, Math.PI * 2);
             ctx.strokeStyle = themeColors.selection; ctx.lineWidth = 2; ctx.stroke();
         }
@@ -221,7 +285,6 @@ export class GraphModule {
         ctx.globalAlpha = n.scale;
         ctx.fillStyle = textColor;
 
-
         ctx.font = `${n.type==='root'?'bold':''} ${12 * n.scale}px "Segoe UI", sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
@@ -229,8 +292,6 @@ export class GraphModule {
         const textY = n.y + r + 15;
         ctx.fillText(n.label, n.x, textY);
 
-        // 重置状态
-        ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
         ctx.globalAlpha = 1;
     }
 
@@ -269,13 +330,11 @@ export class GraphModule {
         ctx.translate(cam.x, cam.y);
         ctx.scale(cam.k, cam.k);
 
-        // 绘制连线
-        ctx.beginPath();
-        // [Fix] 连线颜色也需要适配深色模式
         const isDark = document.body.getAttribute('data-theme') === 'dark';
-        ctx.strokeStyle = isDark && config.colorsDark ? config.colorsDark.link : config.colors.link;
+        const linkColor = isDark && config.colorsDark ? config.colorsDark.link : config.colors.link;
         ctx.lineWidth = 1.5;
 
+        // 绘制连线
         this.app.state.links.forEach(l => {
             const s = l.source.id ? l.source : this.app.state.nodes.find(n => n.id === l.source);
             const t = l.target.id ? l.target : this.app.state.nodes.find(n => n.id === l.target);
@@ -283,12 +342,14 @@ export class GraphModule {
             if (s && t && !isNaN(s.x) && !isNaN(s.y) && !isNaN(t.x) && !isNaN(t.y)) {
                 if (this.isNodeVisible(s, 500) || this.isNodeVisible(t, 500)) {
                     if (typeof l.source === 'object' && typeof l.target === 'object') {
+                        ctx.strokeStyle = linkColor;
                         this.drawLink(ctx, l);
                     }
                 }
             }
         });
-        ctx.stroke();
+
+        this.drawDragLink(ctx);
 
         this.app.state.nodes.forEach(n => {
             if (isNaN(n.x) || isNaN(n.y)) return;
@@ -299,13 +360,12 @@ export class GraphModule {
         });
 
         ctx.restore();
-
         this.app.ui.updateBubblePosition();
-
         requestAnimationFrame(() => this.renderLoop());
     }
 
     exportImage() {
+        // ... (保持原样)
         if (this.app.state.nodes.length === 0) return this.app.ui.toast('画布为空');
 
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -336,9 +396,7 @@ export class GraphModule {
         ctx.save();
         ctx.translate(-minX + padding, -minY + padding);
 
-        ctx.beginPath();
-        // [Fix] 导出时连线颜色同步
-        ctx.strokeStyle = isDark && config.colorsDark ? config.colorsDark.link : config.colors.link;
+        const linkColor = isDark && config.colorsDark ? config.colorsDark.link : config.colors.link;
         ctx.lineWidth = 1.5;
         this.app.state.links.forEach(l => {
             const s = l.source.id ? l.source : this.app.state.nodes.find(n => n.id === l.source);
@@ -346,11 +404,11 @@ export class GraphModule {
 
             if (s && t && !isNaN(s.x) && !isNaN(s.y) && !isNaN(t.x) && !isNaN(t.y)) {
                 if (typeof l.source === 'object' && typeof l.target === 'object') {
+                    ctx.strokeStyle = linkColor;
                     this.drawLink(ctx, l);
                 }
             }
         });
-        ctx.stroke();
 
         this.app.state.nodes.forEach(n => {
             if (isNaN(n.x) || isNaN(n.y)) return;
@@ -381,11 +439,6 @@ export class GraphModule {
             ctx.restore();
         }
     }
-
-    // ... (bindEvents, addRootNode 等方法保留) ...
-    // 为了完整性，这里可以省略不写，因为逻辑没变，但如果需要完整文件请告知。
-    // 上面的 drawNode, renderLoop, exportImage 已经包含了关键修复。
-    // 以下是 bindEvents 等方法的占位符，保持你原有的逻辑即可。
 
     addRootNode() {
         if (!this.app.state.currentId) return this.app.ui.toast('请先新建项目');
@@ -424,6 +477,54 @@ export class GraphModule {
         }
     }
 
+    // [New] 计算点击位置是否在连线附近
+    getLinkAtPos(mx, my) {
+        const threshold = 5 / this.app.state.camera.k; // 增加点击容差
+        let closestLink = null;
+        let minDistance = threshold;
+
+        for (const link of this.app.state.links) {
+            // 只允许选中飞线
+            if (link.type !== 'cross' || !this.app.state.showCrossLinks) continue;
+
+            const s = link.source;
+            const t = link.target;
+            if (!s || !t || isNaN(s.x) || isNaN(t.x)) continue;
+
+            // 点到线段的距离公式
+            const A = mx - s.x;
+            const B = my - s.y;
+            const C = t.x - s.x;
+            const D = t.y - s.y;
+
+            const dot = A * C + B * D;
+            const len_sq = C * C + D * D;
+            let param = -1;
+            if (len_sq !== 0) param = dot / len_sq;
+
+            let xx, yy;
+
+            if (param < 0) {
+                xx = s.x; yy = s.y;
+            } else if (param > 1) {
+                xx = t.x; yy = t.y;
+            } else {
+                xx = s.x + param * C;
+                yy = s.y + param * D;
+            }
+
+            const dx = mx - xx;
+            const dy = my - yy;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+
+            if (dist < minDistance) {
+                minDistance = dist;
+                closestLink = link;
+            }
+        }
+        return closestLink;
+    }
+
     bindEvents() {
         const canvas = this.canvas;
         const getPos = (e) => {
@@ -431,6 +532,7 @@ export class GraphModule {
             const k = this.app.state.camera.k;
             const cx = e.touches ? e.touches[0].clientX : e.clientX;
             const cy = e.touches ? e.touches[0].clientY : e.clientY;
+            this.mousePos = { x: cx - rect.left, y: cy - rect.top };
             return { x: (cx - rect.left - this.app.state.camera.x) / k, y: (cy - rect.top - this.app.state.camera.y) / k, rawX: cx, rawY: cy };
         };
 
@@ -451,9 +553,21 @@ export class GraphModule {
         window.addEventListener('keydown', (e) => {
             if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
             if (e.key === 'Delete' || e.key === 'Backspace') {
+                // 删除节点
                 if (this.app.state.selectedNodes.size > 0) {
                     this.app.ui.onBubbleDelete();
                 }
+                // [New] 删除选中的飞线
+                else if (this.app.state.selectedLink) {
+                    if (confirm('删除这条飞线？')) {
+                        this.app.data.deleteLink(this.app.state.selectedLink);
+                    }
+                }
+            }
+            if (e.key === 'Escape' && this.app.state.isLinking) {
+                this.app.state.isLinking = false;
+                this.app.state.linkingSourceNode = null;
+                this.app.ui.toast('已取消连线');
             }
         });
 
@@ -463,6 +577,7 @@ export class GraphModule {
             if (e.target !== canvas) return;
 
             if (e.touches && e.touches.length === 2) {
+                // ... pinch logic ...
                 const dx = e.touches[0].clientX - e.touches[1].clientX;
                 const dy = e.touches[0].clientY - e.touches[1].clientY;
                 this.pinchStartDist = Math.hypot(dx, dy);
@@ -475,11 +590,28 @@ export class GraphModule {
             for (let i = this.app.state.nodes.length - 1; i >= 0; i--) {
                 const n = this.app.state.nodes[i];
                 const r = (n.type === 'root' ? config.nodeRadius : config.subRadius) * (n.scale || 1);
-                if (Math.hypot(m.x - (n.x + r*0.707), m.y - (n.y + r*0.707)) < 15) { this.addChildNode(n); return; }
+                if (!this.app.state.isLinking && Math.hypot(m.x - (n.x + r*0.707), m.y - (n.y + r*0.707)) < 15) {
+                    this.addChildNode(n); return;
+                }
                 if (Math.hypot(m.x - n.x, m.y - n.y) < r) { hitNode = n; break; }
             }
 
+            // 飞线模式
+            if (this.app.state.isLinking) {
+                if (hitNode) {
+                    this.app.data.addCrossLink(this.app.state.linkingSourceNode.id, hitNode.id);
+                    this.app.state.isLinking = false;
+                    this.app.state.linkingSourceNode = null;
+                } else {
+                    this.app.state.isLinking = false;
+                    this.app.state.linkingSourceNode = null;
+                    this.app.ui.toast('已取消连线');
+                }
+                return;
+            }
+
             if (hitNode) {
+                this.app.state.selectedLink = null; // 取消选中连线
                 if (e.ctrlKey || e.metaKey) {
                     if (this.app.state.selectedNodes.has(hitNode.id)) {
                         this.app.state.selectedNodes.delete(hitNode.id);
@@ -505,6 +637,18 @@ export class GraphModule {
                     this.app.state.simulation.alphaTarget(0.3).restart();
                 }
             } else {
+                // [New] 尝试选中飞线
+                const hitLink = this.getLinkAtPos(m.x, m.y);
+                if (hitLink) {
+                    this.app.state.selectedLink = hitLink;
+                    this.app.state.selectedNodes.clear(); // 清除节点选中
+                    this.app.ui.hideNodeBubble();
+                    // 不进行平移
+                    return;
+                } else {
+                    this.app.state.selectedLink = null;
+                }
+
                 if (!e.ctrlKey && !e.metaKey) {
                     this.app.state.selectedNodes.clear();
                     this.app.ui.hideNodeBubble();
@@ -515,7 +659,10 @@ export class GraphModule {
         };
 
         const handleMove = (e) => {
+            getPos(e);
+
             if (e.touches && e.touches.length === 2 && this.pinchStartDist) {
+                // ... pinch logic ...
                 const dx = e.touches[0].clientX - e.touches[1].clientX;
                 const dy = e.touches[0].clientY - e.touches[1].clientY;
                 const dist = Math.hypot(dx, dy);
@@ -526,13 +673,21 @@ export class GraphModule {
 
             if (!e.touches) {
                 const m = getPos(e);
+                // [New] 如果鼠标在飞线上，显示小手形状
+                const hitLink = this.getLinkAtPos(m.x, m.y);
+                if (hitLink) {
+                    this.canvas.style.cursor = 'pointer';
+                } else {
+                    this.canvas.style.cursor = 'default';
+                }
+
                 let hoverNode = null;
                 for (let i = this.app.state.nodes.length - 1; i >= 0; i--) {
                     const n = this.app.state.nodes[i];
                     const r = (n.type === 'root' ? config.nodeRadius : config.subRadius) * (n.scale || 1);
                     if (Math.hypot(m.x - n.x, m.y - n.y) < r) { hoverNode = n; break; }
                 }
-                if (hoverNode && hoverNode.resId) this.app.ui.showTooltip(hoverNode, e.clientX, e.clientY);
+                if (hoverNode && hoverNode.resId && !this.app.state.isLinking) this.app.ui.showTooltip(hoverNode, e.clientX, e.clientY);
                 else this.app.ui.hideTooltip();
             }
 

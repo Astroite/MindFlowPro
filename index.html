@@ -59,6 +59,7 @@
             <div class="divider"></div>
             <button class="tool-btn primary" onclick="app.graph.addRootNode()" title="添加根节点"><span>🎯 根节点</span></button>
             <button class="tool-btn" onclick="app.graph.resetCamera()" title="视图归位"><span>🔎 归位</span></button>
+            <button class="tool-btn" id="btnToggleLinks" onclick="app.ui.toggleCrossLinks()" title="显示/隐藏飞线 (Alt+L)"><span>👁️ 飞线</span></button>
             <div class="divider"></div>
             <input type="text" id="projTitleInput" class="project-title-input" placeholder="未命名项目" onchange="app.data.renameProject(this.value)" title="点击重命名项目">
             <div class="divider"></div>
@@ -81,6 +82,10 @@
 <div id="nodeBubble" class="node-bubble-container" style="display: none;">
     <button class="bubble-btn action-edit" onclick="app.ui.onBubbleEdit()" title="编辑节点">
         <span style="font-size: 16px;">✏️</span>
+    </button>
+    <!-- [New] 飞线按钮 -->
+    <button class="bubble-btn action-link" onclick="app.ui.onBubbleLink()" title="创建连线">
+        <span style="font-size: 16px;">🔗</span>
     </button>
     <button class="bubble-btn action-delete" onclick="app.ui.onBubbleDelete()" title="删除节点">
         <span style="font-size: 16px;">🗑️</span>

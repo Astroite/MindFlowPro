@@ -1,7 +1,9 @@
 import { config } from '../config.js';
 
 export class UIModule {
-    // ... existing init and other methods ...
+    /**
+     * @param {import('../types.js').App} app
+     */
     constructor(app) {
         this.app = app;
         this.tooltipEl = null;
@@ -11,7 +13,7 @@ export class UIModule {
     init() {
         this.initTooltip();
         this.bindGlobalEvents();
-        this.setupInputModal(); // 别忘了这个
+        this.setupInputModal();
 
         this.app.eventBus.on('resources:updated', () => this.renderResourceTree());
         this.app.eventBus.on('nodes:deleted', () => {
@@ -23,8 +25,7 @@ export class UIModule {
         this.app.eventBus.on('toast', (data) => this.toast(data.msg));
     }
 
-    // ... existing initTooltip, setupInputModal, promptUser, bindGlobalEvents, updateSaveStatus, updateProjectSelect ...
-
+    // ... existing initTooltip, setupInputModal, promptUser ...
     initTooltip() {
         this.tooltipEl = document.createElement('div');
         this.tooltipEl.id = 'mindflow-tooltip';
@@ -125,6 +126,13 @@ export class UIModule {
         resList.ondragover = (e) => this.dragOver(e, null);
         resList.ondrop = (e) => this.drop(e, null);
         resList.ondragleave = (e) => this.dragLeave(e);
+
+        // 绑定全局快捷键：Alt + L 切换飞线显示
+        window.addEventListener('keydown', (e) => {
+            if (e.altKey && e.code === 'KeyL') {
+                this.toggleCrossLinks();
+            }
+        });
     }
 
     updateSaveStatus(text) {
@@ -519,7 +527,31 @@ export class UIModule {
         }
     }
 
-    // ... dragStart, dragOver, dragLeave, drop, showSidebarPreview, displayTooltip, hideTooltip, showTooltip, toast, exportImage ...
+    // --- 新增：飞线创建按钮点击事件 ---
+    onBubbleLink() {
+        const node = this.app.state.bubbleNode;
+        if (!node) return;
+
+        this.hideNodeBubble();
+        this.app.state.isLinking = true;
+        this.app.state.linkingSourceNode = node;
+        this.toast('请点击另一个节点以建立连接 (ESC取消)');
+    }
+
+    // --- 新增：飞线显示切换 ---
+    toggleCrossLinks() {
+        this.app.state.showCrossLinks = !this.app.state.showCrossLinks;
+        // 强制重绘
+        this.app.graph.renderLoop();
+        this.toast(this.app.state.showCrossLinks ? '已显示飞线' : '已隐藏飞线');
+
+        // 更新按钮状态
+        const btn = document.getElementById('btnToggleLinks');
+        if (btn) {
+            if (!this.app.state.showCrossLinks) btn.classList.add('disabled');
+            else btn.classList.remove('disabled');
+        }
+    }
 
     dragStart(e, id) {
         e.dataTransfer.setData('text/plain', id); e.dataTransfer.effectAllowed = 'move';
