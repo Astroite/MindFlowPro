@@ -18,6 +18,10 @@ export class GraphModule {
         this.pinchStartScale = 1;
         this.mousePos = { x: 0, y: 0 };
         this.needsRender = true;
+        this.isMarqueeSelecting = false;
+        this.marqueeStart = { x: 0, y: 0 };
+        this.marqueeEnd = { x: 0, y: 0 };
+        this.dragOffsets = new Map();
     }
 
     init() {
@@ -451,6 +455,24 @@ export class GraphModule {
             this.drawPlusButton(ctx, n);
         });
 
+        // Draw marquee selection rect (in world space)
+        if (this.isMarqueeSelecting) {
+            const rx = Math.min(this.marqueeStart.x, this.marqueeEnd.x);
+            const ry = Math.min(this.marqueeStart.y, this.marqueeEnd.y);
+            const rw = Math.abs(this.marqueeEnd.x - this.marqueeStart.x);
+            const rh = Math.abs(this.marqueeEnd.y - this.marqueeStart.y);
+            ctx.save();
+            ctx.strokeStyle = config.colors.selection || '#6366f1';
+            ctx.fillStyle = 'rgba(99, 102, 241, 0.08)';
+            ctx.lineWidth = 1.5 / cam.k;
+            ctx.setLineDash([6 / cam.k, 3 / cam.k]);
+            ctx.beginPath();
+            ctx.rect(rx, ry, rw, rh);
+            ctx.fill();
+            ctx.stroke();
+            ctx.restore();
+        }
+
         ctx.restore();
         this.app.ui.updateBubblePosition();
         requestAnimationFrame(() => this.renderLoop());
@@ -763,6 +785,12 @@ export class GraphModule {
                 this.app.state.linkingSourceNode = null;
                 this.app.ui.toast('已取消连线');
             }
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+                e.preventDefault();
+                this.app.state.nodes.forEach(n => this.app.state.selectedNodes.add(n.id));
+                this.app.ui.hideNodeBubble();
+                this.needsRender = true;
+            }
         });
 
         const handleStart = (e) => {
@@ -828,6 +856,19 @@ export class GraphModule {
                 if (this.dragSubject) {
                     this.dragSubject.fx = this.dragSubject.x;
                     this.dragSubject.fy = this.dragSubject.y;
+                    // Store offsets for all other selected nodes (multi-drag)
+                    this.dragOffsets.clear();
+                    if (this.app.state.selectedNodes.size > 1) {
+                        this.app.state.selectedNodes.forEach(id => {
+                            if (id === this.dragSubject.id) return;
+                            const n = this.app.state.nodes.find(n => n.id === id);
+                            if (n) {
+                                this.dragOffsets.set(id, { dx: n.x - this.dragSubject.x, dy: n.y - this.dragSubject.y });
+                                n.fx = n.x;
+                                n.fy = n.y;
+                            }
+                        });
+                    }
                     this.app.state.simulation.alphaTarget(0.3).restart();
                 }
             } else {
@@ -842,12 +883,23 @@ export class GraphModule {
                     this.app.state.selectedLink = null;
                 }
 
-                if (!e.ctrlKey && !e.metaKey) {
-                    this.app.state.selectedNodes.clear();
-                    this.app.ui.hideNodeBubble();
+                if (e.shiftKey) {
+                    // Start marquee selection
+                    if (!e.ctrlKey && !e.metaKey) {
+                        this.app.state.selectedNodes.clear();
+                        this.app.ui.hideNodeBubble();
+                    }
+                    this.isMarqueeSelecting = true;
+                    this.marqueeStart = { x: m.x, y: m.y };
+                    this.marqueeEnd = { x: m.x, y: m.y };
+                } else {
+                    if (!e.ctrlKey && !e.metaKey) {
+                        this.app.state.selectedNodes.clear();
+                        this.app.ui.hideNodeBubble();
+                    }
+                    this.isPanning = true;
+                    this.startPan = { x: m.rawX, y: m.rawY };
                 }
-                this.isPanning = true;
-                this.startPan = { x: m.rawX, y: m.rawY };
             }
         };
 
@@ -868,7 +920,11 @@ export class GraphModule {
                 const m = getPos(e);
                 // [New] 如果鼠标在飞线上，显示小手形状
                 const hitLink = this.getLinkAtPos(m.x, m.y);
-                if (hitLink) {
+                if (this.isMarqueeSelecting) {
+                    this.canvas.style.cursor = 'crosshair';
+                } else if (e.shiftKey && !this.dragSubject && !this.isPanning) {
+                    this.canvas.style.cursor = 'crosshair';
+                } else if (hitLink) {
                     this.canvas.style.cursor = 'pointer';
                 } else {
                     this.canvas.style.cursor = 'default';
@@ -885,13 +941,26 @@ export class GraphModule {
                 else this.app.ui.hideTooltip();
             }
 
-            if (!this.dragSubject && !this.isPanning) return;
+            if (!this.dragSubject && !this.isPanning && !this.isMarqueeSelecting) return;
             e.preventDefault();
             const m = getPos(e);
+
+            if (this.isMarqueeSelecting) {
+                this.marqueeEnd = { x: m.x, y: m.y };
+                this.needsRender = true;
+                return;
+            }
 
             if (this.dragSubject) {
                 this.app.ui.hideNodeBubble();
                 this.dragSubject.fx = m.x; this.dragSubject.fy = m.y;
+                // Move all other selected nodes in tandem
+                if (this.dragOffsets.size > 0) {
+                    this.dragOffsets.forEach((offset, id) => {
+                        const n = this.app.state.nodes.find(n => n.id === id);
+                        if (n) { n.fx = m.x + offset.dx; n.fy = m.y + offset.dy; }
+                    });
+                }
             }
             else if (this.isPanning) {
                 this.app.ui.hideNodeBubble();
@@ -903,8 +972,41 @@ export class GraphModule {
         const handleEnd = (e) => {
             this.needsRender = true;
             if (e.touches && e.touches.length < 2) this.pinchStartDist = null;
+
+            // Finalize marquee selection
+            if (this.isMarqueeSelecting) {
+                this.isMarqueeSelecting = false;
+                const x1 = Math.min(this.marqueeStart.x, this.marqueeEnd.x);
+                const y1 = Math.min(this.marqueeStart.y, this.marqueeEnd.y);
+                const x2 = Math.max(this.marqueeStart.x, this.marqueeEnd.x);
+                const y2 = Math.max(this.marqueeStart.y, this.marqueeEnd.y);
+                if (x2 - x1 > 4 || y2 - y1 > 4) {
+                    this.app.state.nodes.forEach(n => {
+                        if (!isNaN(n.x) && !isNaN(n.y) && n.x >= x1 && n.x <= x2 && n.y >= y1 && n.y <= y2) {
+                            this.app.state.selectedNodes.add(n.id);
+                        }
+                    });
+                    if (this.app.state.selectedNodes.size === 1) {
+                        const node = this.app.state.nodes.find(n => this.app.state.selectedNodes.has(n.id));
+                        if (node) this.app.ui.showNodeBubble(node);
+                    } else {
+                        this.app.ui.hideNodeBubble();
+                    }
+                }
+                this.needsRender = true;
+                return;
+            }
+
             if (this.dragSubject) {
                 this.dragSubject.fx = null; this.dragSubject.fy = null;
+                // Release all other selected nodes
+                if (this.dragOffsets.size > 0) {
+                    this.dragOffsets.forEach((_, id) => {
+                        const n = this.app.state.nodes.find(n => n.id === id);
+                        if (n) { n.fx = null; n.fy = null; }
+                    });
+                    this.dragOffsets.clear();
+                }
                 this.app.state.simulation.alphaTarget(0);
                 if (this.app.state.selectedNodes.size === 1 && this.app.state.selectedNodes.has(this.dragSubject.id)) {
                     this.app.ui.showNodeBubble(this.dragSubject);
