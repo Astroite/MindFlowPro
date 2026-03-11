@@ -215,8 +215,32 @@ export class GraphModule {
         ctx.restore();
     }
 
+    // [Feature 2] Text wrapping helper
+    wrapText(ctx, text, maxWidth, maxLines = 2) {
+        if (!text) return [''];
+        const lines = [];
+        let remaining = text;
+        while (remaining.length > 0 && lines.length < maxLines) {
+            if (ctx.measureText(remaining).width <= maxWidth) {
+                lines.push(remaining);
+                remaining = '';
+            } else {
+                const isLast = lines.length === maxLines - 1;
+                const suffix = isLast ? '…' : '';
+                let lo = 1, hi = remaining.length;
+                while (lo < hi) {
+                    const mid = Math.ceil((lo + hi) / 2);
+                    if (ctx.measureText(remaining.slice(0, mid) + suffix).width <= maxWidth) lo = mid;
+                    else hi = mid - 1;
+                }
+                lines.push(remaining.slice(0, lo) + suffix);
+                remaining = isLast ? '' : remaining.slice(lo);
+            }
+        }
+        return lines.length > 0 ? lines : [''];
+    }
+
     drawNode(ctx, n) {
-        // ... (保持原样) ...
         if (isNaN(n.x) || isNaN(n.y)) return;
 
         if (typeof n.scale === 'undefined') n.scale = 1;
@@ -235,6 +259,11 @@ export class GraphModule {
 
         if (n.type === 'root') {
             fillColor = themeColors.primary;
+        }
+
+        // [Feature 4] Custom node color
+        if (n.type === 'root' && n.color) {
+            fillColor = n.color;
         }
 
         if (res && res.type === 'color') {
@@ -323,7 +352,7 @@ export class GraphModule {
             ctx.strokeStyle = themeColors.selection; ctx.lineWidth = 2; ctx.stroke();
         }
 
-        // 6. 绘制文字
+        // 6. 绘制文字 [Feature 2] — text wrapping
         ctx.globalAlpha = n.scale;
         ctx.fillStyle = textColor;
 
@@ -333,22 +362,21 @@ export class GraphModule {
 
         const textY = n.y + r + 15;
         const maxLabelWidth = r * 4;
-        let label = n.label || '';
-        if (ctx.measureText(label).width > maxLabelWidth) {
-            let lo = 0, hi = label.length;
-            while (lo < hi) {
-                const mid = Math.ceil((lo + hi) / 2);
-                if (ctx.measureText(label.slice(0, mid) + '…').width <= maxLabelWidth) {
-                    lo = mid;
-                } else {
-                    hi = mid - 1;
-                }
-            }
-            label = label.slice(0, lo) + '…';
-        }
-        ctx.fillText(label, n.x, textY);
+        const lineHeight = 14 * n.scale;
+        const lines = this.wrapText(ctx, n.label || '', maxLabelWidth);
+        lines.forEach((line, i) => ctx.fillText(line, n.x, textY + i * lineHeight));
 
         ctx.globalAlpha = 1;
+
+        // [Feature 7] Note indicator — amber dot at upper-left of node
+        if (n.note && n.scale >= 0.9) {
+            const noteX = n.x - r * 0.707;
+            const noteY = n.y - r * 0.707;
+            ctx.beginPath();
+            ctx.arc(noteX, noteY, 5, 0, Math.PI * 2);
+            ctx.fillStyle = '#f59e0b';
+            ctx.fill();
+        }
     }
 
     drawPlusButton(ctx, n) {
@@ -429,7 +457,6 @@ export class GraphModule {
     }
 
     exportImage() {
-        // ... (保持原样)
         if (this.app.state.nodes.length === 0) return this.app.ui.toast('画布为空');
 
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -488,6 +515,83 @@ export class GraphModule {
         this.app.ui.toast('图片已导出');
     }
 
+    // [Feature 10] Export to SVG
+    exportSVG() {
+        if (this.app.state.nodes.length === 0) return this.app.ui.toast('画布为空');
+        let minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity;
+        this.app.state.nodes.forEach(n => {
+            if (isNaN(n.x)||isNaN(n.y)) return;
+            const r = n.type==='root' ? config.nodeRadius : config.subRadius;
+            minX=Math.min(minX,n.x-r); maxX=Math.max(maxX,n.x+r);
+            minY=Math.min(minY,n.y-r); maxY=Math.max(maxY,n.y+r);
+        });
+        const pad=50, w=maxX-minX+pad*2, h=maxY-minY+pad*2;
+        const ox=-minX+pad, oy=-minY+pad;
+        const isDark = document.body.getAttribute('data-theme')==='dark';
+        const colors = isDark ? config.colorsDark : config.colors;
+        const escX = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        const parts = [];
+        // Links
+        this.app.state.links.forEach(l => {
+            const s = typeof l.source==='object' ? l.source : this.app.state.nodes.find(n=>n.id===l.source);
+            const t = typeof l.target==='object' ? l.target : this.app.state.nodes.find(n=>n.id===l.target);
+            if (!s||!t||isNaN(s.x)||isNaN(t.x)) return;
+            const sx=s.x+ox, sy=s.y+oy, tx=t.x+ox, ty=t.y+oy;
+            if (l.type==='cross') {
+                if (!this.app.state.showCrossLinks) return;
+                const dx=t.x-s.x, dy=t.y-s.y, dist=Math.sqrt(dx*dx+dy*dy);
+                if (dist===0) return;
+                const offset=Math.min(dist*0.2,150);
+                const nx=-dy/dist, ny=dx/dist;
+                const cpx=(sx+tx)/2+nx*offset, cpy=(sy+ty)/2+ny*offset;
+                const tr=(t.type==='root'?config.nodeRadius:config.subRadius)+5;
+                const angle=Math.atan2(ty-cpy,tx-cpx);
+                const ax=tx-tr*Math.cos(angle), ay=ty-tr*Math.sin(angle);
+                parts.push(`<path d="M${sx},${sy} Q${cpx},${cpy} ${tx},${ty}" stroke="${colors.cross}" stroke-width="1.5" fill="none" stroke-dasharray="3,5" opacity="0.5"/>`);
+                parts.push(`<polygon points="${ax},${ay} ${ax-10*Math.cos(angle-Math.PI/6)},${ay-10*Math.sin(angle-Math.PI/6)} ${ax-10*Math.cos(angle+Math.PI/6)},${ay-10*Math.sin(angle+Math.PI/6)}" fill="${colors.cross}" opacity="0.5"/>`);
+            } else {
+                parts.push(`<line x1="${sx}" y1="${sy}" x2="${tx}" y2="${ty}" stroke="${colors.link}" stroke-width="1.5"/>`);
+            }
+        });
+        // Nodes
+        this.app.state.nodes.forEach(n => {
+            if (isNaN(n.x)||isNaN(n.y)) return;
+            const nx=n.x+ox, ny=n.y+oy;
+            const r=n.type==='root'?config.nodeRadius:config.subRadius;
+            const res = n.resId ? this.app.state.resources.find(r=>r.id===n.resId) : null;
+            let fill = n.type==='root' ? (n.color||colors.primary) : colors.surface;
+            if (res&&res.type==='color') fill=res.content;
+            const stroke = n.type==='root' ? 'rgba(255,255,255,0.2)' : colors.outline;
+            const sw = n.type==='root' ? 2 : 1.5;
+            parts.push(`<circle cx="${nx}" cy="${ny}" r="${r}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`);
+            // Resource icon
+            if (res&&res.type!=='color'&&res.type!=='image') {
+                const icons={md:'📝',code:'💻',audio:'🎵',link:'🔗'};
+                parts.push(`<text x="${nx}" y="${ny}" text-anchor="middle" dominant-baseline="middle" font-size="${n.type==='root'?32:22}">${icons[res.type]||'🔗'}</text>`);
+            }
+            // Note dot
+            if (n.note) parts.push(`<circle cx="${nx-r*0.707}" cy="${ny-r*0.707}" r="5" fill="#f59e0b"/>`);
+            // Label - wrap manually for SVG (approximation: 7px per char)
+            const label = n.label||'';
+            const maxW = r*4;
+            const charsPerLine = Math.floor(maxW/7);
+            const line1 = label.length<=charsPerLine ? label : label.slice(0,charsPerLine-1)+'…';
+            const line2 = label.length>charsPerLine&&label.length<=charsPerLine*2 ? label.slice(charsPerLine) : (label.length>charsPerLine*2?label.slice(charsPerLine,charsPerLine*2-1)+'…':'');
+            const textY=ny+r+15;
+            const fw=n.type==='root'?'bold':'normal';
+            const tc=isDark?'#f3f4f6':'#1f2937';
+            parts.push(`<text x="${nx}" y="${textY}" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="12" font-weight="${fw}" fill="${tc}">${escX(line1)}</text>`);
+            if (line2) parts.push(`<text x="${nx}" y="${textY+14}" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="12" font-weight="${fw}" fill="${tc}">${escX(line2)}</text>`);
+        });
+        const bg=isDark?'#18181b':'#f3f3f3';
+        const svg=`<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">\n<rect width="${w}" height="${h}" fill="${bg}"/>\n${parts.join('\n')}\n</svg>`;
+        const blob=new Blob([svg],{type:'image/svg+xml'});
+        const url=URL.createObjectURL(blob);
+        const a=document.createElement('a'); a.download=`MindFlow_${Date.now()}.svg`; a.href=url; a.click();
+        URL.revokeObjectURL(url);
+        this.app.ui.toast('SVG 已导出');
+    }
+
     drawImageInNode(ctx, node, res, r) {
         if (!this.imageCache.has(res.id)) {
             const img = new Image(); img.src = res.content;
@@ -506,6 +610,7 @@ export class GraphModule {
 
     addRootNode() {
         if (!this.app.state.currentId) return this.app.ui.toast('请先新建项目');
+        this.app.data._snapshot();
         const cam = this.app.state.camera;
         const cx = (this.width / 2 - cam.x) / cam.k;
         const cy = (this.height / 2 - cam.y) / cam.k;
@@ -520,6 +625,7 @@ export class GraphModule {
     }
 
     addChildNode(parent) {
+        this.app.data._snapshot();
         const angle = Math.random() * Math.PI * 2;
         const node = { id: 'n_' + Date.now(), type: 'sub', x: parent.x + Math.cos(angle) * 10, y: parent.y + Math.sin(angle) * 10, label: '新节点', scale: 0.05 };
         this.app.state.nodes.push(node);
@@ -534,6 +640,7 @@ export class GraphModule {
     async clearAll() {
         const confirmed = await this.app.ui.confirmDialog('确定清空画布吗？此操作不可恢复。');
         if (confirmed) {
+            this.app.data._snapshot();
             this.app.state.nodes = []; this.app.state.links = [];
             this.app.state.selectedNodes.clear();
             this.app.ui.hideNodeBubble();
@@ -561,7 +668,6 @@ export class GraphModule {
 
             if (link.type === 'cross') {
                 // [修正] 贝塞尔曲线点击检测 (采样法)
-                // 1. 重复 drawLink 中的控制点计算逻辑
                 const dx = t.x - s.x;
                 const dy = t.y - s.y;
                 const len = Math.sqrt(dx*dx + dy*dy);
@@ -571,14 +677,7 @@ export class GraphModule {
                 const cpX = (s.x + t.x) / 2 + nx * offset;
                 const cpY = (s.y + t.y) / 2 + ny * offset;
 
-                // 2. 动态采样点数量
-                // 根据屏幕上的像素长度估算需要的采样点
-                // 曲线长度近似 = 弦长 len
-                // 屏幕像素长度 = len * camK
-                // 我们希望每隔约 10 个屏幕像素采样一次
                 let steps = Math.ceil((len * camK) / 10);
-
-                // 限制采样点数量范围，避免极短或极长导致的性能问题
                 steps = Math.max(10, Math.min(steps, 200));
 
                 for (let i = 0; i <= steps; i++) {
@@ -590,8 +689,6 @@ export class GraphModule {
                     const d = Math.hypot(mx - bx, my - by);
                     if (d < dist) dist = d;
                 }
-            } else {
-                // 理论上只有飞线进入此逻辑
             }
 
             if (dist < minDistance) {
@@ -614,6 +711,7 @@ export class GraphModule {
         };
 
         canvas.addEventListener('dragover', (e) => { e.preventDefault(); });
+        // [Feature 5] Drag resource to empty canvas → create new node
         canvas.addEventListener('drop', (e) => {
             e.preventDefault();
             const resId = e.dataTransfer.getData('text/plain');
@@ -621,9 +719,28 @@ export class GraphModule {
             const m = getPos(e);
             const hitNode = this.app.state.nodes.find(n => Math.hypot(m.x - n.x, m.y - n.y) < (n.type==='root'?config.nodeRadius:config.subRadius));
             if (hitNode) {
+                this.app.data._snapshot();
                 hitNode.resId = resId;
                 this.app.ui.toast('资源已关联');
                 this.app.storage.triggerSave();
+                this.app.graph.needsRender = true;
+            } else {
+                if (!this.app.state.currentId) return;
+                const res = this.app.state.resources.find(r => r.id === resId);
+                if (!res || res.type === 'folder') return;
+                this.app.data._snapshot();
+                const node = {
+                    id: 'n_' + Date.now(), type: 'root',
+                    x: m.x + (Math.random()-0.5)*20, y: m.y + (Math.random()-0.5)*20,
+                    label: res.name, scale: 0.1, resId
+                };
+                this.app.state.nodes.push(node);
+                this.app.state.selectedNodes.clear();
+                this.app.state.selectedNodes.add(node.id);
+                this.app.ui.showNodeBubble(node);
+                this.updateSimulation();
+                this.app.storage.triggerSave();
+                this.app.ui.toast('已从资源创建节点');
             }
         });
 
@@ -634,11 +751,11 @@ export class GraphModule {
                 if (this.app.state.selectedNodes.size > 0) {
                     this.app.ui.onBubbleDelete();
                 }
-                // [New] 删除选中的飞线
+                // [Feature 11] 删除选中的飞线 — use confirmDialog
                 else if (this.app.state.selectedLink) {
-                    if (confirm('删除这条飞线？')) {
-                        this.app.data.deleteLink(this.app.state.selectedLink);
-                    }
+                    this.app.ui.confirmDialog('删除这条飞线？').then(confirmed => {
+                        if (confirmed) this.app.data.deleteLink(this.app.state.selectedLink);
+                    });
                 }
             }
             if (e.key === 'Escape' && this.app.state.isLinking) {
@@ -655,7 +772,6 @@ export class GraphModule {
             if (e.target !== canvas) return;
 
             if (e.touches && e.touches.length === 2) {
-                // ... pinch logic ...
                 const dx = e.touches[0].clientX - e.touches[1].clientX;
                 const dy = e.touches[0].clientY - e.touches[1].clientY;
                 this.pinchStartDist = Math.hypot(dx, dy);
@@ -721,7 +837,6 @@ export class GraphModule {
                     this.app.state.selectedLink = hitLink;
                     this.app.state.selectedNodes.clear(); // 清除节点选中
                     this.app.ui.hideNodeBubble();
-                    // 不进行平移
                     return;
                 } else {
                     this.app.state.selectedLink = null;
@@ -741,7 +856,6 @@ export class GraphModule {
             getPos(e);
 
             if (e.touches && e.touches.length === 2 && this.pinchStartDist) {
-                // ... pinch logic ...
                 const dx = e.touches[0].clientX - e.touches[1].clientX;
                 const dy = e.touches[0].clientY - e.touches[1].clientY;
                 const dist = Math.hypot(dx, dy);
@@ -766,7 +880,8 @@ export class GraphModule {
                     const r = (n.type === 'root' ? config.nodeRadius : config.subRadius) * (n.scale || 1);
                     if (Math.hypot(m.x - n.x, m.y - n.y) < r) { hoverNode = n; break; }
                 }
-                if (hoverNode && hoverNode.resId && !this.app.state.isLinking) this.app.ui.showTooltip(hoverNode, e.clientX, e.clientY);
+                // [Feature 7] Show tooltip for note too
+                if (hoverNode && (hoverNode.resId || hoverNode.note) && !this.app.state.isLinking) this.app.ui.showTooltip(hoverNode, e.clientX, e.clientY);
                 else this.app.ui.hideTooltip();
             }
 

@@ -150,7 +150,8 @@ export class StorageModule {
         const currentProjName = this.app.dom.projTitleInput.value || '未命名项目';
 
         const cleanNodes = this.app.state.nodes.map(n => ({
-            id: n.id, type: n.type, x: n.x, y: n.y, label: n.label, resId: n.resId
+            id: n.id, type: n.type, x: n.x, y: n.y, label: n.label, resId: n.resId,
+            color: n.color || null, note: n.note || null
         }));
         const cleanLinks = this.app.state.links.map(l => ({
             source: l.source.id || l.source,
@@ -301,5 +302,19 @@ export class StorageModule {
         } else {
             this.exportProjectToFile();
         }
+    }
+
+    async duplicateProject(id) {
+        const proj = await localforage.getItem(id);
+        if (!proj) return this.app.ui.toast('无法复制：找不到项目数据');
+        const newId = 'proj_' + Date.now() + '_dup';
+        const newName = proj.name + ' (副本)';
+        const newProj = { ...proj, id: newId, name: newName, created: Date.now() };
+        await localforage.setItem(newId, newProj);
+        this.app.state.projectsIndex.push({ id: newId, name: newName });
+        await this.saveIndex();
+        this.app.ui.updateProjectSelect();
+        this.app.ui.toast('项目已复制: ' + newName);
+        return newId;
     }
 }

@@ -26,7 +26,6 @@ export class UIModule {
         this.app.eventBus.on('toast', (data) => this.toast(data.msg));
     }
 
-    // ... existing initTooltip, setupInputModal, promptUser ...
     initTooltip() {
         this.tooltipEl = document.createElement('div');
         this.tooltipEl.id = 'mindflow-tooltip';
@@ -126,7 +125,8 @@ export class UIModule {
             const f = e.target.files[0]; if (!f) return;
             const isImage = f.type.startsWith('image/');
             if (isImage && f.size > config.maxImageSizeMB * 1024 * 1024) {
-                if (!confirm(`图片超过 ${config.maxImageSizeMB}MB，将自动压缩，是否继续？`)) {
+                const ok = await this.confirmDialog(`图片超过 ${config.maxImageSizeMB}MB，将自动压缩，是否继续？`);
+                if (!ok) {
                     e.target.value = '';
                     return;
                 }
@@ -159,6 +159,17 @@ export class UIModule {
                 this.toggleCrossLinks();
             }
         });
+
+        // [Feature 1] Undo/Redo keyboard shortcuts
+        window.addEventListener('keydown', (e) => {
+            if (['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName)) return;
+            if ((e.ctrlKey||e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z') {
+                e.preventDefault(); this.app.data.undo();
+            }
+            if ((e.ctrlKey||e.metaKey) && ((e.shiftKey && e.key.toLowerCase()==='z') || e.key.toLowerCase()==='y')) {
+                e.preventDefault(); this.app.data.redo();
+            }
+        });
     }
 
     updateSaveStatus(text) {
@@ -176,73 +187,93 @@ export class UIModule {
         sel.innerHTML = h;
     }
 
+    // [Feature 6] Sub-folder support — full renderResourceTree rewrite
     renderResourceTree() {
         const container = this.app.dom.resList;
         const resources = this.app.state.resources;
-
-        if(!resources.length) {
+        if (!resources.length) {
             container.innerHTML = '<div class="empty-tip">暂无资源<br><small>拖入文件或点击添加</small></div>';
+            this._renderTagFilter();
             return;
         }
-
         const keyword = this.app.state.searchKeyword;
-        const folders = resources.filter(r => r.type === 'folder');
-        const rootFiles = resources.filter(r => {
-            if (keyword && !r.name.toLowerCase().includes(keyword)) return false;
-            return !r.parentId && r.type !== 'folder';
-        });
-
+        const activeTag = this.app.state.activeTag || '';
+        const rootItems = resources.filter(r => !r.parentId);
+        const rootFolders = rootItems.filter(r => r.type === 'folder');
+        const rootFiles = rootItems.filter(r => r.type !== 'folder' && this._resMatchesFilter(r, keyword, activeTag));
         let html = '';
+        rootFolders.forEach(f => { html += this._renderFolderHtml(f, resources, keyword, activeTag, 0); });
+        rootFiles.forEach(f => { html += this.createResItemHtml(f, keyword); });
+        container.innerHTML = html || '<div class="empty-tip">没有匹配的资源</div>';
+        this._renderTagFilter();
+    }
 
-        folders.forEach(folder => {
-            const children = resources.filter(r => r.parentId === folder.id && r.type !== 'folder');
-            const matchChildren = children.filter(c => !keyword || c.name.toLowerCase().includes(keyword));
+    _resMatchesFilter(r, keyword, activeTag) {
+        if (r.type === 'folder') return true;
+        const matchKw = !keyword || r.name.toLowerCase().includes(keyword);
+        const matchTag = !activeTag || (r.tags && r.tags.includes(activeTag));
+        return matchKw && matchTag;
+    }
 
-            if (keyword && !folder.name.toLowerCase().includes(keyword) && matchChildren.length === 0) return;
-
-            const isOpen = keyword ? true : this.app.state.expandedFolders.has(folder.id);
-
-            // [新增] 这里的 .btn-add-resource 按钮
-            html += `
-                <div class="res-folder ${isOpen?'open':''}" 
-                     onclick="app.ui.toggleFolder('${folder.id}')"
-                     oncontextmenu="event.preventDefault(); app.ui.handleRenameFolder('${folder.id}');"
-                     ondragover="app.ui.dragOver(event, '${folder.id}')"
-                     ondrop="app.ui.drop(event, '${folder.id}')"
-                     ondragleave="app.ui.dragLeave(event)"
-                     title="右键点击可快速重命名">
-                    <div class="folder-icon">▶</div>
-                    <div class="res-info"><div class="res-name">${this.highlightText(folder.name, keyword)}</div></div>
-                    <div class="res-actions">
-                        <!-- 快速添加资源按钮 -->
-                        <div class="btn-add-resource" onclick="event.stopPropagation(); app.ui.openResModal('New', null, '${folder.id}')" title="在此文件夹添加资源">+</div>
-                        <div class="btn-res-action" onclick="event.stopPropagation(); app.ui.handleRenameFolder('${folder.id}')" title="重命名">✎</div>
-                        <div class="btn-res-action del" onclick="event.stopPropagation(); app.ui.handleDeleteResource('${folder.id}')" title="删除文件夹">🗑</div>
-                    </div>
-                </div>
-                <div class="folder-children ${isOpen?'open':''}">
-                    ${matchChildren.map(child => this.createResItemHtml(child, keyword)).join('')}
-                </div>
-            `;
+    _folderHasMatch(folder, allResources, keyword, activeTag) {
+        if (!keyword && !activeTag) return true;
+        if (!keyword || folder.name.toLowerCase().includes(keyword)) {
+            if (!activeTag) return true;
+        }
+        const children = allResources.filter(r => r.parentId === folder.id);
+        return children.some(r => {
+            if (r.type === 'folder') return this._folderHasMatch(r, allResources, keyword, activeTag);
+            return this._resMatchesFilter(r, keyword, activeTag);
         });
+    }
 
-        rootFiles.forEach(file => { html += this.createResItemHtml(file, keyword); });
-        container.innerHTML = html;
+    _renderFolderHtml(folder, allResources, keyword, activeTag, depth) {
+        if (!this._folderHasMatch(folder, allResources, keyword, activeTag)) return '';
+        const children = allResources.filter(r => r.parentId === folder.id);
+        const childFolders = children.filter(r => r.type === 'folder');
+        const childFiles = children.filter(r => r.type !== 'folder' && this._resMatchesFilter(r, keyword, activeTag));
+        const isOpen = keyword || activeTag ? true : this.app.state.expandedFolders.has(folder.id);
+        const pl = 10 + depth * 16;
+        let childHtml = '';
+        childFolders.forEach(f => { childHtml += this._renderFolderHtml(f, allResources, keyword, activeTag, depth + 1); });
+        childFiles.forEach(f => { childHtml += this.createResItemHtml(f, keyword); });
+        return `
+            <div class="res-folder ${isOpen?'open':''}" style="padding-left:${pl}px"
+                 onclick="app.ui.toggleFolder('${folder.id}')"
+                 oncontextmenu="event.preventDefault();app.ui.handleRenameFolder('${folder.id}')"
+                 ondragover="app.ui.dragOver(event,'${folder.id}')"
+                 ondrop="app.ui.drop(event,'${folder.id}')"
+                 ondragleave="app.ui.dragLeave(event)" title="右键点击可快速重命名">
+                <div class="folder-icon">▶</div>
+                <div class="res-info"><div class="res-name">${this.highlightText(folder.name, keyword)}</div></div>
+                <div class="res-actions">
+                    <div class="btn-add-resource" onclick="event.stopPropagation();app.ui.openResModal('New',null,'${folder.id}')" title="在此文件夹添加资源">+</div>
+                    <div class="btn-res-action" onclick="event.stopPropagation();app.ui.handleCreateFolder('${folder.id}')" title="新建子文件夹">📁</div>
+                    <div class="btn-res-action" onclick="event.stopPropagation();app.ui.handleRenameFolder('${folder.id}')" title="重命名">✎</div>
+                    <div class="btn-res-action del" onclick="event.stopPropagation();app.ui.handleDeleteResource('${folder.id}')" title="删除">🗑</div>
+                </div>
+            </div>
+            <div class="folder-children ${isOpen?'open':''}">${childHtml}</div>
+        `;
     }
 
     createResItemHtml(r, keyword) {
         let icon = '🔗';
         if(r.type==='image') icon='🖼️'; else if(r.type==='md') icon='📝'; else if(r.type==='code') icon='💻'; else if(r.type==='color') icon='🎨'; else if(r.type==='audio') icon='🎤';
 
+        // [Feature 8] Tags
+        const tagsHtml = r.tags && r.tags.length ? `<div class="res-tags">${r.tags.map(t=>`<span class="res-tag">${this.app.utils.escapeHtml(t)}</span>`).join('')}</div>` : '';
+
         return `
-            <div class="res-item" 
-                 draggable="true" 
+            <div class="res-item"
+                 draggable="true"
                  ondragstart="app.ui.dragStart(event, '${r.id}')"
                  onmouseenter="app.ui.showSidebarPreview('${r.id}', event)"
                  onmouseleave="app.ui.hideTooltip()">
                 <div class="res-icon" onclick="app.ui.viewResource('${r.id}')">${icon}</div>
                 <div class="res-info" onclick="app.ui.viewResource('${r.id}')">
                     <div class="res-name">${this.highlightText(r.name, keyword)}</div>
+                    ${tagsHtml}
                 </div>
                 <div class="res-actions">
                     <div class="btn-res-action" onclick="app.ui.handleEditResource('${r.id}')" title="编辑">✎</div>
@@ -255,19 +286,40 @@ export class UIModule {
     highlightText(text, keyword) {
         const safeText = this.app.utils.escapeHtml(text);
         if (!keyword) return safeText;
-        // Escape keyword for both regex engine and HTML context
         const regexSafe = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const htmlSafe = this.app.utils.escapeHtml(regexSafe);
         const reg = new RegExp(`(${htmlSafe})`, 'gi');
         return safeText.replace(reg, '<span class="highlight">$1</span>');
     }
 
-    // ... handleCreateFolder, handleRenameFolder, handleDeleteResource, handleEditResource ...
+    // [Feature 8] Tag filter rendering
+    _renderTagFilter() {
+        const area = document.getElementById('tagFilterArea');
+        if (!area) return;
+        const allTags = new Set();
+        this.app.state.resources.forEach(r => {
+            if (r.tags) r.tags.forEach(t => allTags.add(t));
+        });
+        if (allTags.size === 0) { area.innerHTML = ''; return; }
+        const activeTag = this.app.state.activeTag || '';
+        let html = '';
+        if (activeTag) html += `<div class="tag-chip active" onclick="app.ui.setActiveTag('')">✕ ${this.app.utils.escapeHtml(activeTag)}</div>`;
+        allTags.forEach(tag => {
+            if (tag !== activeTag) html += `<div class="tag-chip" onclick="app.ui.setActiveTag('${this.app.utils.escapeHtml(tag)}')">${this.app.utils.escapeHtml(tag)}</div>`;
+        });
+        area.innerHTML = html;
+    }
 
-    handleCreateFolder() {
+    setActiveTag(tag) {
+        this.app.state.activeTag = tag;
+        this.renderResourceTree();
+    }
+
+    // [Feature 6] handleCreateFolder accepts optional parentId
+    handleCreateFolder(parentId = null) {
         if(!this.app.state.currentId) return this.toast('请先创建项目');
         this.promptUser('新建文件夹', '输入文件夹名称').then(name => {
-            if(name) this.app.data.createFolder(name);
+            if(name) this.app.data.createFolder(name, parentId);
         });
     }
 
@@ -279,14 +331,13 @@ export class UIModule {
         });
     }
 
-    handleDeleteResource(id) {
+    // [Feature 11] Replace confirm() with confirmDialog
+    async handleDeleteResource(id) {
         const res = this.app.state.resources.find(r => r.id === id);
         if (!res) return;
-        let confirmMsg = '确定删除此资源吗？';
-        if (res.type === 'folder') confirmMsg = '确定删除此文件夹及其所有内容吗？此操作不可恢复。';
-        if (confirm(confirmMsg)) {
-            this.app.data.deleteResource(id);
-        }
+        const msg = res.type === 'folder' ? '确定删除此文件夹及其所有内容吗？此操作不可恢复。' : '确定删除此资源吗？';
+        const confirmed = await this.confirmDialog(msg);
+        if (confirmed) this.app.data.deleteResource(id);
     }
 
     handleEditResource(id) {
@@ -296,7 +347,7 @@ export class UIModule {
         this.openResModal('Edit', res);
     }
 
-    // [修改] 支持传入 parentId 预选文件夹
+    // [Feature 6] openResModal updated with hierarchical folder options
     openResModal(mode, res, preselectParentId = null) {
         if(!this.app.state.currentId) return this.toast('请先建项目');
         const title = document.getElementById('resModalTitle');
@@ -305,8 +356,16 @@ export class UIModule {
         const nameInput = document.getElementById('resName');
 
         const folders = this.app.state.resources.filter(r => r.type === 'folder');
-        parentSel.innerHTML = '<option value="">(根目录)</option>' +
-            folders.map(f => `<option value="${f.id}">📁 ${f.name}</option>`).join('');
+        const buildFolderOptions = (allFolders, parentId, depth) => {
+            return allFolders
+                .filter(f => f.parentId === parentId)
+                .map(f => {
+                    const children = buildFolderOptions(allFolders, f.id, depth + 1);
+                    const indent = '\u3000'.repeat(depth);
+                    return `<option value="${f.id}">${indent}📁 ${this.app.utils.escapeHtml(f.name)}</option>${children}`;
+                }).join('');
+        };
+        parentSel.innerHTML = '<option value="">(根目录)</option>' + buildFolderOptions(folders, null, 0);
 
         this.app.state.tempFileBase64 = null;
         document.getElementById('resFile').value = '';
@@ -315,11 +374,15 @@ export class UIModule {
         document.getElementById('resColorInput').value = '#000000';
         document.getElementById('resColorValue').innerText = '#000000';
 
+        // [Feature 8] Tags field
+        const tagsInput = document.getElementById('resTags');
+
         if (mode === 'Edit' && res) {
             title.innerText = '✨ 编辑资源';
             typeSel.value = res.type; typeSel.disabled = true;
             nameInput.value = res.name;
             parentSel.value = res.parentId || '';
+            if (tagsInput) tagsInput.value = (res && res.tags) ? res.tags.join(', ') : '';
 
             if (res.type === 'link') document.getElementById('resTextInput').value = res.content;
             else if (res.type === 'md' || res.type === 'code') document.getElementById('resTextArea').value = res.content;
@@ -328,15 +391,13 @@ export class UIModule {
             title.innerText = '✨ 添加资源';
             typeSel.disabled = false; this.app.state.editingResId = null;
             nameInput.value = ''; typeSel.value = 'image';
-            // 如果点击了文件夹旁边的+号，自动选中该文件夹
             parentSel.value = preselectParentId || '';
+            if (tagsInput) tagsInput.value = '';
         }
 
         this.toggleResInput();
         document.getElementById('resModal').style.display='flex';
     }
-
-    // ... existing handleSaveResourceClick, handleSaveNodeEdit, confirmDeleteProject ...
 
     async handleSaveResourceClick() {
         const type = document.getElementById('resType').value;
@@ -344,6 +405,10 @@ export class UIModule {
         const parentId = document.getElementById('resParentId').value || null;
 
         if (!name) return this.toast('请输入名称');
+
+        // [Feature 8] Read tags
+        const tagsRaw = document.getElementById('resTags') ? document.getElementById('resTags').value : '';
+        const tags = tagsRaw.split(',').map(t => t.trim()).filter(Boolean);
 
         let content = null;
         if (type === 'image') {
@@ -374,7 +439,7 @@ export class UIModule {
 
         this.app.data.saveResource({
             id: this.app.state.editingResId,
-            type, name, content, parentId
+            type, name, content, parentId, tags: tags.length ? tags : []
         });
 
         this.closeModal('resModal');
@@ -388,20 +453,24 @@ export class UIModule {
         if (node) {
             const label = document.getElementById('nodeLabel').value;
             const resId = document.getElementById('nodeResSelect').value || null;
-            this.app.data.updateNode(node.id, { label, resId });
+            // [Feature 4] Color
+            const useColor = document.getElementById('nodeUseColor').checked;
+            const color = useColor ? document.getElementById('nodeColor').value : null;
+            // [Feature 7] Note
+            const note = document.getElementById('nodeNote') ? document.getElementById('nodeNote').value.trim() || null : null;
+            this.app.data.updateNode(node.id, { label, resId, color, note });
             document.getElementById('nodeMenu').style.display = 'none';
         }
     }
 
-    confirmDeleteProject() {
-        if(this.app.state.currentId && confirm('确定删除？')) {
-            this.app.storage.deleteProject(this.app.state.currentId);
-        }
+    // [Feature 11] Replace confirm() with confirmDialog
+    async confirmDeleteProject() {
+        if (!this.app.state.currentId) return;
+        const confirmed = await this.confirmDialog('确定删除此项目吗？所有数据将永久丢失。');
+        if (confirmed) this.app.storage.deleteProject(this.app.state.currentId);
     }
 
     closeModal(id) { document.getElementById(id).style.display='none'; }
-
-    // ... toggleTheme, triggerImport, filterResources, toggleFolder ...
 
     toggleTheme() {
         const body = document.body;
@@ -429,35 +498,52 @@ export class UIModule {
         this.renderResourceTree();
     }
 
-    // ... viewResource, openNodeMenu, toggleSidebar, toggleResInput ...
-
+    // [Feature 3] viewResource — open viewer when no linked node
     viewResource(id) {
         const res = this.app.state.resources.find(r => r.id === id); if(!res) return;
         const n = this.app.state.nodes.find(n => n.resId === id);
         if(n) {
             this.app.state.camera.x = this.app.graph.width/2 - n.x * this.app.state.camera.k;
             this.app.state.camera.y = this.app.graph.height/2 - n.y * this.app.state.camera.k;
+            this.app.graph.needsRender = true;
             this.toast('已定位');
         } else {
-            if(res.type==='link') window.open(res.content);
-            else if(res.type==='image') { const w=window.open(""); w.document.write(`<img src="${res.content}" style="max-width:100%">`); }
-            else if(res.type==='md') {
-                let html = marked.parse(res.content || '');
-                html = this.app.utils.purifyHTML(html);
-                const w = window.open('', '_blank');
-                w.document.write('<\!DOCTYPE html><html><head><meta charset="UTF-8"><title>' + this.app.utils.escapeHtml(res.name) + '</title><style>body{font-family:sans-serif;max-width:800px;margin:40px auto;padding:0 20px;line-height:1.6;}</style></head><body>' + html + '</body></html>');
-                w.document.close();
-            }
-            else if(res.type==='code') {
-                const w = window.open('', '_blank');
-                w.document.write('<\!DOCTYPE html><html><head><meta charset="UTF-8"><title>' + this.app.utils.escapeHtml(res.name) + '</title></head><body><pre style="font-family:monospace;font-size:14px;padding:20px;white-space:pre-wrap;">' + this.app.utils.escapeHtml(res.content || '') + '</pre></body></html>');
-                w.document.close();
-            }
-            else if(res.type==='audio') { const a = new Audio(res.content); a.play(); this.toast('正在播放音频'); }
-            else if(res.type==='color') { navigator.clipboard.writeText(res.content); this.toast('色值已复制: '+res.content); }
+            // [Feature 12] Audio goes through openViewer
+            if (res.type === 'audio') { this.openViewer(id); }
+            else { this.openViewer(id); }
         }
     }
 
+    // [Feature 3] Full-screen resource viewer
+    openViewer(resId) {
+        const res = this.app.state.resources.find(r => r.id === resId);
+        if (!res) return;
+        document.getElementById('viewerTitle').textContent = res.name;
+        const contentEl = document.getElementById('viewerContent');
+        // Stop any playing audio first
+        contentEl.querySelectorAll('audio').forEach(a => a.pause());
+        if (res.type === 'image') {
+            contentEl.innerHTML = `<img src="${res.content}" alt="${this.app.utils.escapeHtml(res.name)}">`;
+        } else if (res.type === 'md') {
+            let html = marked.parse(res.content || '');
+            html = this.app.utils.purifyHTML(html);
+            contentEl.innerHTML = `<div class="md-preview">${html}</div>`;
+        } else if (res.type === 'code') {
+            contentEl.innerHTML = `<pre>${this.app.utils.escapeHtml(res.content || '')}</pre>`;
+        } else if (res.type === 'color') {
+            contentEl.innerHTML = `<div style="width:160px;height:100px;background:${this.app.utils.escapeHtml(res.content)};border-radius:12px;margin:auto;box-shadow:var(--shadow-md)"></div><p style="text-align:center;margin-top:16px;font-family:monospace;font-size:24px;font-weight:bold;">${this.app.utils.escapeHtml(res.content)}</p>`;
+        } else if (res.type === 'audio') {
+            contentEl.innerHTML = `<audio controls src="${res.content}" style="margin:auto;"></audio>`;
+        } else if (res.type === 'link') {
+            contentEl.innerHTML = `<p style="word-break:break-all;margin-bottom:16px;color:var(--text-sub);">${this.app.utils.escapeHtml(res.content)}</p><a href="${res.content}" target="_blank" style="display:inline-block;background:var(--primary);color:white;text-decoration:none;padding:10px 20px;border-radius:8px;">跳转到链接 🔗</a>`;
+        }
+        if (res.note) {
+            contentEl.innerHTML += `<div style="margin-top:20px;padding:12px 16px;background:var(--bg-app);border-radius:8px;border-left:3px solid #f59e0b;"><span style="font-size:12px;color:var(--text-sub);display:block;margin-bottom:4px;">备注</span>${this.app.utils.escapeHtml(res.note)}</div>`;
+        }
+        document.getElementById('viewerModal').style.display = 'flex';
+    }
+
+    // [Feature 4] openNodeMenu — populate color fields
     openNodeMenu(node, x, y) {
         const m = this.app.dom.nodeMenu;
         this.app.state.editingNode = node;
@@ -468,10 +554,20 @@ export class UIModule {
             `<option value="${r.id}" ${r.id===node.resId?'selected':''}>${r.name}</option>`
         ).join('');
 
+        // [Feature 4] Color
+        const colorInput = document.getElementById('nodeColor');
+        const useColorCb = document.getElementById('nodeUseColor');
+        if (colorInput) colorInput.value = node.color || '#6366f1';
+        if (useColorCb) useColorCb.checked = !!node.color;
+
+        // [Feature 7] Note
+        const noteEl = document.getElementById('nodeNote');
+        if (noteEl) noteEl.value = node.note || '';
+
         if (x !== undefined && y !== undefined) {
             let left = x; let top = y;
             if (left + 320 > window.innerWidth) left = window.innerWidth - 340;
-            if (top + 350 > window.innerHeight) top = window.innerHeight - 370;
+            if (top + 400 > window.innerHeight) top = window.innerHeight - 420;
             if (left < 20) left = 20; if (top < 20) top = 20;
 
             m.style.left = left + 'px';
@@ -510,8 +606,6 @@ export class UIModule {
         }
     }
 
-    // ... showNodeBubble, hideNodeBubble, updateBubblePosition, onBubbleEdit, onBubbleDelete ...
-
     showNodeBubble(node) {
         this.app.state.bubbleNode = node;
         this.app.dom.nodeBubble.style.display = 'flex';
@@ -546,29 +640,22 @@ export class UIModule {
         if (!node) return;
         this.hideNodeBubble();
         const cx = window.innerWidth / 2 - 160;
-        const cy = window.innerHeight / 2 - 180;
+        const cy = window.innerHeight / 2 - 200;
         this.openNodeMenu(node, cx, cy);
     }
 
-    onBubbleDelete() {
+    // [Feature 11] Replace confirm() with confirmDialog
+    async onBubbleDelete() {
         const idsToDelete = new Set();
-        if (this.app.state.bubbleNode) {
-            idsToDelete.add(this.app.state.bubbleNode.id);
-        }
+        if (this.app.state.bubbleNode) idsToDelete.add(this.app.state.bubbleNode.id);
         this.app.state.selectedNodes.forEach(id => idsToDelete.add(id));
-
         if (idsToDelete.size === 0) return;
-
-        const confirmMsg = idsToDelete.size > 1
-            ? `确定要删除选中的 ${idsToDelete.size} 个节点吗？`
-            : '确定要删除这个节点及其连线吗？';
-
-        if(confirm(confirmMsg)) {
-            this.app.data.deleteNodes(Array.from(idsToDelete));
-        }
+        const msg = idsToDelete.size > 1 ? `确定要删除选中的 ${idsToDelete.size} 个节点吗？` : '确定要删除这个节点及其连线吗？';
+        const confirmed = await this.confirmDialog(msg);
+        if (confirmed) this.app.data.deleteNodes(Array.from(idsToDelete));
     }
 
-    // --- 新增：飞线创建按钮点击事件 ---
+    // --- 飞线创建按钮点击事件 ---
     onBubbleLink() {
         const node = this.app.state.bubbleNode;
         if (!node) return;
@@ -579,13 +666,12 @@ export class UIModule {
         this.toast('请点击另一个节点以建立连接 (ESC取消)');
     }
 
-    // --- 新增：飞线显示切换 ---
+    // --- 飞线显示切换 ---
     toggleCrossLinks() {
         this.app.state.showCrossLinks = !this.app.state.showCrossLinks;
         this.app.graph.needsRender = true;
         this.toast(this.app.state.showCrossLinks ? '已显示飞线' : '已隐藏飞线');
 
-        // 更新按钮状态
         const btn = document.getElementById('btnToggleLinks');
         if (btn) {
             if (!this.app.state.showCrossLinks) btn.classList.add('disabled');
@@ -649,15 +735,38 @@ export class UIModule {
         this.tooltipEl.style.top = top + 'px'; this.tooltipEl.style.left = left + 'px';
     }
 
+    // [Feature 12] Stop audio on tooltip hide
     hideTooltip() {
         clearTimeout(this.app.state.tooltipTimer);
         this.app.state.tooltipTimer = setTimeout(() => {
-            if (this.tooltipEl) this.tooltipEl.style.display = 'none';
+            if (this.tooltipEl) {
+                this.tooltipEl.querySelectorAll('audio').forEach(a => { a.pause(); a.currentTime = 0; });
+                this.tooltipEl.style.display = 'none';
+            }
         }, config.previewDelay);
     }
 
+    // [Feature 7] showTooltip — supports note tooltip
     showTooltip(node, x, y) {
-        if (node.resId) this.displayTooltip(node.resId, x, y);
+        if (node.resId) {
+            this.displayTooltip(node.resId, x, y);
+        } else if (node.note) {
+            this.displayNoteTooltip(node.note, x, y);
+        }
+    }
+
+    // [Feature 7] Note tooltip
+    displayNoteTooltip(note, x, y) {
+        clearTimeout(this.app.state.tooltipTimer);
+        this.tooltipEl.innerHTML = `<div style="font-size:13px;line-height:1.6;white-space:pre-wrap;max-width:260px;">${this.app.utils.escapeHtml(note)}</div>`;
+        this.tooltipEl.style.display = 'block';
+        const pad = 15;
+        let top = y + pad, left = x + pad;
+        const rect = this.tooltipEl.getBoundingClientRect();
+        if (left + rect.width > window.innerWidth) left = x - rect.width - pad;
+        if (top + rect.height > window.innerHeight) top = y - rect.height - pad;
+        this.tooltipEl.style.top = top + 'px';
+        this.tooltipEl.style.left = left + 'px';
     }
 
     toast(m) {
@@ -669,5 +778,11 @@ export class UIModule {
 
     exportImage() {
         this.app.graph.exportImage();
+    }
+
+    // [Feature 9] Duplicate current project
+    async duplicateCurrentProject() {
+        if (!this.app.state.currentId) return this.toast('请先选择一个项目');
+        await this.app.storage.duplicateProject(this.app.state.currentId);
     }
 }
