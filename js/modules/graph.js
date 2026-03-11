@@ -22,6 +22,13 @@ export class GraphModule {
         this.marqueeStart = { x: 0, y: 0 };
         this.marqueeEnd = { x: 0, y: 0 };
         this.dragOffsets = new Map();
+        this.minimapCanvas = null;
+        this.minimapCtx = null;
+        this._minimapScale = 1;
+        this._minimapOffsetX = 0;
+        this._minimapOffsetY = 0;
+        this._minimapDragging = false;
+        this._inlineEditNode = null;
     }
 
     init() {
@@ -48,6 +55,7 @@ export class GraphModule {
 
         this.bindEvents();
         this.resize();
+        this.initMinimap();
         requestAnimationFrame(() => this.renderLoop());
     }
 
@@ -474,6 +482,7 @@ export class GraphModule {
         }
 
         ctx.restore();
+        this.renderMinimap();
         this.app.ui.updateBubblePosition();
         requestAnimationFrame(() => this.renderLoop());
     }
@@ -669,6 +678,182 @@ export class GraphModule {
             this.updateSimulation();
             this.app.storage.triggerSave();
         }
+    }
+
+    initMinimap() {
+        const mc = document.createElement('canvas');
+        mc.id = 'minimapCanvas';
+        mc.width = 200;
+        mc.height = 130;
+        Object.assign(mc.style, {
+            position: 'absolute', bottom: '16px', right: '16px',
+            width: '200px', height: '130px',
+            borderRadius: '10px', border: '1px solid var(--border-color)',
+            boxShadow: 'var(--shadow-md)', cursor: 'crosshair', zIndex: '50'
+        });
+        this.app.dom.canvasWrapper.appendChild(mc);
+        this.minimapCanvas = mc;
+        this.minimapCtx = mc.getContext('2d');
+
+        const navigate = (e) => {
+            if (!this._minimapScale) return;
+            const rect = mc.getBoundingClientRect();
+            const worldX = (e.clientX - rect.left - this._minimapOffsetX) / this._minimapScale;
+            const worldY = (e.clientY - rect.top - this._minimapOffsetY) / this._minimapScale;
+            this.app.state.camera.x = this.width / 2 - worldX * this.app.state.camera.k;
+            this.app.state.camera.y = this.height / 2 - worldY * this.app.state.camera.k;
+            this.needsRender = true;
+        };
+        mc.addEventListener('mousedown', (e) => { this._minimapDragging = true; navigate(e); });
+        window.addEventListener('mousemove', (e) => { if (this._minimapDragging) navigate(e); });
+        window.addEventListener('mouseup', () => { this._minimapDragging = false; });
+    }
+
+    renderMinimap() {
+        const mc = this.minimapCanvas;
+        const ctx = this.minimapCtx;
+        if (!mc || !ctx) return;
+
+        const mw = mc.width, mh = mc.height;
+        const nodes = this.app.state.nodes.filter(n => !isNaN(n.x) && !isNaN(n.y));
+        const isDark = document.body.getAttribute('data-theme') === 'dark';
+
+        ctx.clearRect(0, 0, mw, mh);
+        ctx.fillStyle = isDark ? 'rgba(24,24,27,0.93)' : 'rgba(255,255,255,0.93)';
+        ctx.fillRect(0, 0, mw, mh);
+
+        if (nodes.length === 0) {
+            ctx.fillStyle = isDark ? '#4b5563' : '#9ca3af';
+            ctx.font = '11px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('空画布', mw / 2, mh / 2);
+            return;
+        }
+
+        // Compute bounds
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        nodes.forEach(n => {
+            const r = (n.type === 'root' ? config.nodeRadius : config.subRadius) * (n.scale || 1);
+            minX = Math.min(minX, n.x - r); maxX = Math.max(maxX, n.x + r);
+            minY = Math.min(minY, n.y - r); maxY = Math.max(maxY, n.y + r);
+        });
+
+        const pad = 12;
+        const gw = maxX - minX || 1, gh = maxY - minY || 1;
+        const scale = Math.min((mw - pad * 2) / gw, (mh - pad * 2) / gh);
+        const ox = pad + (mw - pad * 2 - gw * scale) / 2 - minX * scale;
+        const oy = pad + (mh - pad * 2 - gh * scale) / 2 - minY * scale;
+        this._minimapScale = scale;
+        this._minimapOffsetX = ox;
+        this._minimapOffsetY = oy;
+
+        // Links
+        ctx.strokeStyle = isDark ? '#374151' : '#d1d5db';
+        ctx.lineWidth = 0.8;
+        this.app.state.links.forEach(l => {
+            const s = typeof l.source === 'object' ? l.source : this.app.state.nodes.find(n => n.id === l.source);
+            const t = typeof l.target === 'object' ? l.target : this.app.state.nodes.find(n => n.id === l.target);
+            if (!s || !t || isNaN(s.x) || isNaN(t.x)) return;
+            ctx.beginPath();
+            ctx.moveTo(s.x * scale + ox, s.y * scale + oy);
+            ctx.lineTo(t.x * scale + ox, t.y * scale + oy);
+            ctx.stroke();
+        });
+
+        // Nodes
+        nodes.forEach(n => {
+            const r = Math.max(2.5, (n.type === 'root' ? config.nodeRadius : config.subRadius) * scale);
+            ctx.beginPath();
+            ctx.arc(n.x * scale + ox, n.y * scale + oy, r, 0, Math.PI * 2);
+            if (n.type === 'root') ctx.fillStyle = n.color || config.colors.primary;
+            else ctx.fillStyle = isDark ? '#4b5563' : '#e5e7eb';
+            ctx.fill();
+            if (this.app.state.selectedNodes.has(n.id)) {
+                ctx.strokeStyle = config.colors.selection || '#6366f1';
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+            }
+        });
+
+        // Viewport rect
+        const cam = this.app.state.camera;
+        const vx = (-cam.x / cam.k) * scale + ox;
+        const vy = (-cam.y / cam.k) * scale + oy;
+        const vw = (this.width / cam.k) * scale;
+        const vh = (this.height / cam.k) * scale;
+        ctx.fillStyle = 'rgba(99,102,241,0.06)';
+        ctx.fillRect(vx, vy, vw, vh);
+        ctx.strokeStyle = '#6366f1';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([]);
+        ctx.strokeRect(vx, vy, vw, vh);
+    }
+
+    startInlineEdit(node) {
+        let input = document.getElementById('nodeInlineEdit');
+        if (!input) {
+            input = document.createElement('input');
+            input.id = 'nodeInlineEdit';
+            input.type = 'text';
+            document.body.appendChild(input);
+        }
+
+        const cam = this.app.state.camera;
+        const rect = this.canvas.getBoundingClientRect();
+        const r = (node.type === 'root' ? config.nodeRadius : config.subRadius) * (node.scale || 1) * cam.k;
+        const sx = node.x * cam.k + cam.x + rect.left;
+        const sy = node.y * cam.k + cam.y + rect.top;
+
+        const isDark = document.body.getAttribute('data-theme') === 'dark';
+        Object.assign(input.style, {
+            display: 'block',
+            position: 'fixed',
+            left: sx + 'px',
+            top: (sy + r + 6) + 'px',
+            transform: 'translateX(-50%)',
+            zIndex: '2000',
+            border: '2px solid #6366f1',
+            borderRadius: '6px',
+            padding: '3px 8px',
+            fontSize: '13px',
+            fontFamily: '"Segoe UI", sans-serif',
+            textAlign: 'center',
+            minWidth: '80px',
+            maxWidth: '220px',
+            outline: 'none',
+            background: isDark ? '#27272a' : '#ffffff',
+            color: isDark ? '#f3f4f6' : '#1f2937',
+            boxShadow: '0 2px 10px rgba(99,102,241,0.25)'
+        });
+
+        input.value = node.label || '';
+        this._inlineEditNode = node;
+        this.app.ui.hideNodeBubble();
+        input.focus();
+        input.select();
+
+        const commit = () => {
+            const label = input.value.trim();
+            if (label && label !== node.label) {
+                this.app.data.updateNode(node.id, { label });
+            }
+            input.style.display = 'none';
+            this._inlineEditNode = null;
+            this.app.ui.showNodeBubble(node);
+        };
+        const cancel = () => {
+            input.style.display = 'none';
+            this._inlineEditNode = null;
+            this.app.ui.showNodeBubble(node);
+        };
+
+        input.onkeydown = (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); commit(); }
+            else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+            e.stopPropagation();
+        };
+        input.onblur = commit;
     }
 
     // [New] 计算点击位置是否在连线附近
@@ -1029,6 +1214,18 @@ export class GraphModule {
             this.app.ui.hideNodeBubble();
             e.preventDefault(); const f = e.deltaY < 0 ? 1.1 : 0.9;
             this.app.state.camera.k = Math.max(0.1, Math.min(5, this.app.state.camera.k * f));
+        });
+
+        canvas.addEventListener('dblclick', (e) => {
+            if (e.target !== canvas) return;
+            const m = getPos(e);
+            for (let i = this.app.state.nodes.length - 1; i >= 0; i--) {
+                const n = this.app.state.nodes[i];
+                const r = (n.type === 'root' ? config.nodeRadius : config.subRadius) * (n.scale || 1);
+                // Skip + button area
+                if (Math.hypot(m.x - (n.x + r * 0.707), m.y - (n.y + r * 0.707)) < 15) return;
+                if (Math.hypot(m.x - n.x, m.y - n.y) < r) { this.startInlineEdit(n); return; }
+            }
         });
     }
 }
