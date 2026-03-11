@@ -55,7 +55,14 @@ const app = {
         showCrossLinks: true,
         isLinking: false,
         linkingSourceNode: null,
-        selectedLink: null // 当前选中的连线
+        selectedLink: null, // 当前选中的连线
+
+        // [Feature 1] Undo / Redo
+        undoStack: [],
+        redoStack: [],
+
+        // [Feature 8] Tag filter
+        activeTag: ''
     },
 
     init: async function() {
