@@ -8,6 +8,7 @@ export class UIModule {
         this.app = app;
         this.tooltipEl = null;
         this._promptResolve = null;
+        this._promptMode = 'input'; // 'input' | 'confirm'
     }
 
     init() {
@@ -45,19 +46,31 @@ export class UIModule {
         const cancelBtn = document.getElementById('inputModalCancel');
         const input = document.getElementById('inputModalValue');
 
-        const confirmHandler = () => {
-            if (this._promptResolve) {
-                const val = input.value.trim();
-                this._promptResolve(val || null);
-            }
-            this.closeModal('inputModal');
+        const resetModal = () => {
+            input.style.display = '';
+            this._promptMode = 'input';
             this._promptResolve = null;
         };
 
-        const cancelHandler = () => {
-            if (this._promptResolve) this._promptResolve(null);
+        const confirmHandler = () => {
+            if (this._promptResolve) {
+                if (this._promptMode === 'confirm') {
+                    this._promptResolve(true);
+                } else {
+                    const val = input.value.trim();
+                    this._promptResolve(val || null);
+                }
+            }
             this.closeModal('inputModal');
-            this._promptResolve = null;
+            resetModal();
+        };
+
+        const cancelHandler = () => {
+            if (this._promptResolve) {
+                this._promptResolve(this._promptMode === 'confirm' ? false : null);
+            }
+            this.closeModal('inputModal');
+            resetModal();
         };
 
         confirmBtn.onclick = confirmHandler;
@@ -72,12 +85,25 @@ export class UIModule {
     promptUser(title, placeholder = '', defaultValue = '') {
         return new Promise((resolve) => {
             this._promptResolve = resolve;
+            this._promptMode = 'input';
             document.getElementById('inputModalTitle').innerText = title;
             const input = document.getElementById('inputModalValue');
+            input.style.display = '';
             input.placeholder = placeholder;
             input.value = defaultValue;
             document.getElementById('inputModal').style.display = 'flex';
             setTimeout(() => input.focus(), 100);
+        });
+    }
+
+    confirmDialog(msg) {
+        return new Promise((resolve) => {
+            this._promptResolve = resolve;
+            this._promptMode = 'confirm';
+            document.getElementById('inputModalTitle').innerText = msg;
+            const input = document.getElementById('inputModalValue');
+            input.style.display = 'none';
+            document.getElementById('inputModal').style.display = 'flex';
         });
     }
 
@@ -227,9 +253,13 @@ export class UIModule {
     }
 
     highlightText(text, keyword) {
-        if (!keyword) return text;
-        const reg = new RegExp(`(${keyword})`, 'gi');
-        return text.replace(reg, '<span class="highlight">$1</span>');
+        const safeText = this.app.utils.escapeHtml(text);
+        if (!keyword) return safeText;
+        // Escape keyword for both regex engine and HTML context
+        const regexSafe = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const htmlSafe = this.app.utils.escapeHtml(regexSafe);
+        const reg = new RegExp(`(${htmlSafe})`, 'gi');
+        return safeText.replace(reg, '<span class="highlight">$1</span>');
     }
 
     // ... handleCreateFolder, handleRenameFolder, handleDeleteResource, handleEditResource ...
@@ -411,7 +441,18 @@ export class UIModule {
         } else {
             if(res.type==='link') window.open(res.content);
             else if(res.type==='image') { const w=window.open(""); w.document.write(`<img src="${res.content}" style="max-width:100%">`); }
-            else if(res.type==='md' || res.type==='code') alert('请在悬浮窗查看内容预览');
+            else if(res.type==='md') {
+                let html = marked.parse(res.content || '');
+                html = this.app.utils.purifyHTML(html);
+                const w = window.open('', '_blank');
+                w.document.write('<\!DOCTYPE html><html><head><meta charset="UTF-8"><title>' + this.app.utils.escapeHtml(res.name) + '</title><style>body{font-family:sans-serif;max-width:800px;margin:40px auto;padding:0 20px;line-height:1.6;}</style></head><body>' + html + '</body></html>');
+                w.document.close();
+            }
+            else if(res.type==='code') {
+                const w = window.open('', '_blank');
+                w.document.write('<\!DOCTYPE html><html><head><meta charset="UTF-8"><title>' + this.app.utils.escapeHtml(res.name) + '</title></head><body><pre style="font-family:monospace;font-size:14px;padding:20px;white-space:pre-wrap;">' + this.app.utils.escapeHtml(res.content || '') + '</pre></body></html>');
+                w.document.close();
+            }
             else if(res.type==='audio') { const a = new Audio(res.content); a.play(); this.toast('正在播放音频'); }
             else if(res.type==='color') { navigator.clipboard.writeText(res.content); this.toast('色值已复制: '+res.content); }
         }
@@ -541,8 +582,7 @@ export class UIModule {
     // --- 新增：飞线显示切换 ---
     toggleCrossLinks() {
         this.app.state.showCrossLinks = !this.app.state.showCrossLinks;
-        // 强制重绘
-        this.app.graph.renderLoop();
+        this.app.graph.needsRender = true;
         this.toast(this.app.state.showCrossLinks ? '已显示飞线' : '已隐藏飞线');
 
         // 更新按钮状态

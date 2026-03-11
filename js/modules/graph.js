@@ -17,6 +17,7 @@ export class GraphModule {
         this.pinchStartDist = null;
         this.pinchStartScale = 1;
         this.mousePos = { x: 0, y: 0 };
+        this.needsRender = true;
     }
 
     init() {
@@ -39,7 +40,7 @@ export class GraphModule {
             .force("collide", d3.forceCollide().radius(d => d.type === 'root' ? config.collideRadius * 1.5 : config.collideRadius))
             .force("x", d3.forceX(0).strength(0.01))
             .force("y", d3.forceY(0).strength(0.01))
-            .on("tick", () => {}); // 渲染逻辑独立于 tick，在 renderLoop 中执行
+            .on("tick", () => { this.needsRender = true; }); // 渲染逻辑独立于 tick，在 renderLoop 中执行
 
         this.bindEvents();
         this.resize();
@@ -70,6 +71,7 @@ export class GraphModule {
         const w = this.width || window.innerWidth;
         const h = this.height || window.innerHeight;
         this.app.state.camera = { x: w / 2, y: h / 2, k: 1 };
+        this.needsRender = true;
     }
 
     updateSimulation() {
@@ -77,6 +79,7 @@ export class GraphModule {
         this.app.state.simulation.nodes(this.app.state.nodes);
         this.app.state.simulation.force("link").links(this.app.state.links);
         this.app.state.simulation.alpha(1).restart();
+        this.needsRender = true;
     }
 
     isNodeVisible(node, padding = 100) {
@@ -329,7 +332,21 @@ export class GraphModule {
         ctx.textBaseline = 'middle';
 
         const textY = n.y + r + 15;
-        ctx.fillText(n.label, n.x, textY);
+        const maxLabelWidth = r * 4;
+        let label = n.label || '';
+        if (ctx.measureText(label).width > maxLabelWidth) {
+            let lo = 0, hi = label.length;
+            while (lo < hi) {
+                const mid = Math.ceil((lo + hi) / 2);
+                if (ctx.measureText(label.slice(0, mid) + '…').width <= maxLabelWidth) {
+                    lo = mid;
+                } else {
+                    hi = mid - 1;
+                }
+            }
+            label = label.slice(0, lo) + '…';
+        }
+        ctx.fillText(label, n.x, textY);
 
         ctx.globalAlpha = 1;
     }
@@ -363,6 +380,14 @@ export class GraphModule {
                 return;
             }
         }
+
+        // Skip drawing if nothing changed; always draw during node-spawn animation or linking mode
+        const hasAnimatingNodes = this.app.state.nodes.some(n => n.scale < 1);
+        if (!this.needsRender && !hasAnimatingNodes && !this.app.state.isLinking) {
+            requestAnimationFrame(() => this.renderLoop());
+            return;
+        }
+        this.needsRender = false;
 
         ctx.clearRect(0, 0, this.width, this.height);
         ctx.save();
@@ -506,8 +531,9 @@ export class GraphModule {
         this.app.storage.triggerSave();
     }
 
-    clearAll() {
-        if(confirm('确定清空画布吗？')) {
+    async clearAll() {
+        const confirmed = await this.app.ui.confirmDialog('确定清空画布吗？此操作不可恢复。');
+        if (confirmed) {
             this.app.state.nodes = []; this.app.state.links = [];
             this.app.state.selectedNodes.clear();
             this.app.ui.hideNodeBubble();
@@ -623,6 +649,7 @@ export class GraphModule {
         });
 
         const handleStart = (e) => {
+            this.needsRender = true;
             document.getElementById('nodeMenu').style.display = 'none';
 
             if (e.target !== canvas) return;
@@ -710,6 +737,7 @@ export class GraphModule {
         };
 
         const handleMove = (e) => {
+            this.needsRender = true;
             getPos(e);
 
             if (e.touches && e.touches.length === 2 && this.pinchStartDist) {
@@ -758,6 +786,7 @@ export class GraphModule {
         };
 
         const handleEnd = (e) => {
+            this.needsRender = true;
             if (e.touches && e.touches.length < 2) this.pinchStartDist = null;
             if (this.dragSubject) {
                 this.dragSubject.fx = null; this.dragSubject.fy = null;
@@ -778,6 +807,7 @@ export class GraphModule {
         canvas.addEventListener('touchmove', handleMove, {passive: false});
         window.addEventListener('touchend', handleEnd);
         canvas.addEventListener('wheel', (e) => {
+            this.needsRender = true;
             this.app.dom.nodeMenu.style.display = 'none';
             this.app.ui.hideNodeBubble();
             e.preventDefault(); const f = e.deltaY < 0 ? 1.1 : 0.9;
