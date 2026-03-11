@@ -61,6 +61,7 @@
             <div class="divider"></div>
             <button class="tool-btn primary" onclick="app.graph.addRootNode()" title="添加根节点"><span>🎯 根节点</span></button>
             <button class="tool-btn" onclick="app.graph.resetCamera()" title="视图归位"><span>🔎 归位</span></button>
+            <button class="tool-btn" onclick="app.graph.fitToScreen()" title="适配所有节点 (F)"><span>⊡ 适配</span></button>
             <button class="tool-btn" id="btnToggleLinks" onclick="app.ui.toggleCrossLinks()" title="显示/隐藏飞线 (Alt+L)"><span>👁️ 飞线</span></button>
             <div class="divider"></div>
             <input type="text" id="projTitleInput" class="project-title-input" placeholder="未命名项目" onchange="app.data.renameProject(this.value)" title="点击重命名项目">
@@ -72,6 +73,7 @@
             <div class="divider"></div>
             <button class="tool-btn" onclick="app.ui.toggleTheme()" title="切换深色/浅色模式"><span>🌗</span></button>
             <a href="https://astroite.com/article/8cd061ed/" target="_blank" class="tool-btn" style="text-decoration: none; color: var(--primary);" title="说明书"><span>❓</span></a>
+            <button class="tool-btn" onclick="document.getElementById('shortcutsModal').style.display='flex'" title="键盘快捷键 (?)"><span>⌨️</span></button>
         </div>
 
         <div id="saveStatus" class="status-text">就绪</div>
@@ -93,6 +95,33 @@
     <button class="bubble-btn action-delete" onclick="app.ui.onBubbleDelete()" title="删除节点">
         <span style="font-size: 16px;">🗑️</span>
     </button>
+</div>
+
+<!-- 键盘快捷键说明弹窗 -->
+<div class="modal-overlay" id="shortcutsModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal-box" style="width:460px;max-height:80vh;overflow-y:auto;">
+        <h3 style="margin-bottom:18px;">⌨️ 键盘快捷键</h3>
+        <table class="shortcuts-table">
+            <thead><tr><th>操作</th><th>快捷键</th></tr></thead>
+            <tbody>
+                <tr><td>撤销</td><td><kbd>Ctrl</kbd>+<kbd>Z</kbd></td></tr>
+                <tr><td>重做</td><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd></td></tr>
+                <tr><td>全选节点</td><td><kbd>Ctrl</kbd>+<kbd>A</kbd></td></tr>
+                <tr><td>删除选中节点/飞线</td><td><kbd>Delete</kbd> / <kbd>Backspace</kbd></td></tr>
+                <tr><td>多选节点（点选）</td><td><kbd>Ctrl</kbd>+单击</td></tr>
+                <tr><td>框选节点</td><td><kbd>Shift</kbd>+拖动空白区域</td></tr>
+                <tr><td>移动多个节点</td><td>拖动任意已选节点</td></tr>
+                <tr><td>双击编辑标签</td><td>双击节点</td></tr>
+                <tr><td>确认编辑</td><td><kbd>Enter</kbd></td></tr>
+                <tr><td>取消编辑</td><td><kbd>Escape</kbd></td></tr>
+                <tr><td>适配所有节点</td><td><kbd>F</kbd></td></tr>
+                <tr><td>取消连线模式</td><td><kbd>Escape</kbd></td></tr>
+                <tr><td>显示/隐藏飞线</td><td><kbd>Alt</kbd>+<kbd>L</kbd></td></tr>
+                <tr><td>显示/隐藏快捷键</td><td><kbd>?</kbd></td></tr>
+            </tbody>
+        </table>
+        <button class="btn-primary" style="margin-top:20px;width:100%;" onclick="document.getElementById('shortcutsModal').style.display='none'">关闭</button>
+    </div>
 </div>
 
 <!-- [新增] 通用单行输入弹窗 -->

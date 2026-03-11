@@ -597,3 +597,11 @@ canvas:active { cursor: grabbing; }
 .tag-chip.active { background: var(--primary); color: white; }
 .res-tags { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 3px; }
 .res-tag { font-size: 10px; padding: 1px 6px; border-radius: 10px; background: rgba(99,102,241,0.1); color: var(--primary); }
+
+/* Shortcuts modal */
+.shortcuts-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.shortcuts-table th { text-align: left; padding: 6px 10px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-sub); border-bottom: 1px solid var(--border-color); }
+.shortcuts-table td { padding: 7px 10px; border-bottom: 1px solid var(--border-color); color: var(--text-main); }
+.shortcuts-table tr:last-child td { border-bottom: none; }
+.shortcuts-table tr:hover td { background: rgba(99,102,241,0.04); }
+kbd { display: inline-block; padding: 2px 6px; font-size: 11px; font-family: monospace; background: var(--bg-app); border: 1px solid var(--border-color); border-radius: 4px; box-shadow: 0 1px 0 var(--border-color); color: var(--text-main); }
