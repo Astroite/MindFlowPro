@@ -62,7 +62,10 @@ const app = {
         redoStack: [],
 
         // [Feature 8] Tag filter
-        activeTag: ''
+        activeTag: '',
+
+        // [P1-5] Resource sort mode
+        resSortMode: 'created'
     },
 
     init: async function() {
@@ -78,7 +81,7 @@ const app = {
             mainCanvas: document.getElementById('mainCanvas'),
             nodeMenu: document.getElementById('nodeMenu'),
             nodeBubble: document.getElementById('nodeBubble'),
-            toast: document.getElementById('toast')
+            toastContainer: document.getElementById('toastContainer')
         };
 
         // 2. 实例化核心模块

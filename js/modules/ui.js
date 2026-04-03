@@ -23,7 +23,7 @@ export class UIModule {
             this.app.state.editingNode = null;
             this.hideNodeBubble();
         });
-        this.app.eventBus.on('toast', (data) => this.toast(data.msg));
+        this.app.eventBus.on('toast', (data) => this.toast(data.msg, data.type));
     }
 
     initTooltip() {
@@ -31,13 +31,29 @@ export class UIModule {
         this.tooltipEl.id = 'mindflow-tooltip';
         Object.assign(this.tooltipEl.style, {
             position: 'fixed', display: 'none', zIndex: '1000',
-            background: 'white', border: '1px solid #ccc', borderRadius: '6px',
+            borderRadius: '6px',
             padding: '10px', boxShadow: '0 4px 15px rgba(0,0,0,0.1)',
             maxWidth: '300px', maxHeight: '300px', overflow: 'hidden', pointerEvents: 'auto'
         });
         document.body.appendChild(this.tooltipEl);
         this.tooltipEl.addEventListener('mouseenter', () => clearTimeout(this.app.state.tooltipTimer));
         this.tooltipEl.addEventListener('mouseleave', () => this.hideTooltip());
+        this._updateTooltipTheme();
+    }
+
+    // [P0-3] Update tooltip colors to match current theme
+    _updateTooltipTheme() {
+        if (!this.tooltipEl) return;
+        const isDark = document.body.getAttribute('data-theme') === 'dark';
+        if (isDark) {
+            this.tooltipEl.style.background = '#27272a';
+            this.tooltipEl.style.border = '1px solid #3f3f46';
+            this.tooltipEl.style.color = '#f3f4f6';
+        } else {
+            this.tooltipEl.style.background = '#ffffff';
+            this.tooltipEl.style.border = '1px solid #e2e8f0';
+            this.tooltipEl.style.color = '#1f2937';
+        }
     }
 
     setupInputModal() {
@@ -169,6 +185,58 @@ export class UIModule {
             if ((e.ctrlKey||e.metaKey) && ((e.shiftKey && e.key.toLowerCase()==='z') || e.key.toLowerCase()==='y')) {
                 e.preventDefault(); this.app.data.redo();
             }
+            // [P0-2] Ctrl+N — new root node
+            if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase() === 'n') {
+                e.preventDefault(); this.app.graph.addRootNode();
+            }
+            // [P0-2] Ctrl+F — focus sidebar search
+            if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase() === 'f') {
+                e.preventDefault();
+                const searchInput = document.querySelector('.search-input');
+                if (searchInput) { searchInput.focus(); searchInput.select(); }
+            }
+            // [P0-2] Ctrl+S — force save
+            if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase() === 's') {
+                e.preventDefault(); this.app.storage.forceSave(); this.toast('已保存');
+            }
+            // [P0-2] Ctrl+E — export image
+            if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase() === 'e') {
+                e.preventDefault(); this.exportImage();
+            }
+            // [P0-2] Tab — add child node for selected node
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                if (this.app.state.selectedNodes.size === 1) {
+                    const nodeId = [...this.app.state.selectedNodes][0];
+                    const node = this.app.state.nodes.find(n => n.id === nodeId);
+                    if (node) this.app.graph.addChildNode(node);
+                }
+            }
+            // [P1-3] F2 — inline edit node label
+            if (e.key === 'F2') {
+                e.preventDefault();
+                if (this.app.state.selectedNodes.size === 1) {
+                    const nodeId = [...this.app.state.selectedNodes][0];
+                    const node = this.app.state.nodes.find(n => n.id === nodeId);
+                    if (node) this.app.graph.inlineEdit(node);
+                }
+            }
+            // [P0-5] Ctrl+C — copy selected nodes
+            if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase() === 'c') {
+                if (this.app.state.selectedNodes.size > 0) {
+                    e.preventDefault(); this.app.data.copySelectedNodes();
+                }
+            }
+            // [P0-5] Ctrl+V — paste nodes
+            if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase() === 'v') {
+                e.preventDefault(); this.app.data.pasteNodes(30, 30);
+            }
+            // [P0-5] Ctrl+D — duplicate selected nodes
+            if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase() === 'd') {
+                if (this.app.state.selectedNodes.size > 0) {
+                    e.preventDefault(); this.app.data.duplicateSelectedNodes();
+                }
+            }
         });
     }
 
@@ -200,7 +268,7 @@ export class UIModule {
         const activeTag = this.app.state.activeTag || '';
         const rootItems = resources.filter(r => !r.parentId);
         const rootFolders = rootItems.filter(r => r.type === 'folder');
-        const rootFiles = rootItems.filter(r => r.type !== 'folder' && this._resMatchesFilter(r, keyword, activeTag));
+        const rootFiles = this._sortResources(rootItems.filter(r => r.type !== 'folder' && this._resMatchesFilter(r, keyword, activeTag)));
         let html = '';
         rootFolders.forEach(f => { html += this._renderFolderHtml(f, resources, keyword, activeTag, 0); });
         rootFiles.forEach(f => { html += this.createResItemHtml(f, keyword); });
@@ -231,7 +299,7 @@ export class UIModule {
         if (!this._folderHasMatch(folder, allResources, keyword, activeTag)) return '';
         const children = allResources.filter(r => r.parentId === folder.id);
         const childFolders = children.filter(r => r.type === 'folder');
-        const childFiles = children.filter(r => r.type !== 'folder' && this._resMatchesFilter(r, keyword, activeTag));
+        const childFiles = this._sortResources(children.filter(r => r.type !== 'folder' && this._resMatchesFilter(r, keyword, activeTag)));
         const isOpen = keyword || activeTag ? true : this.app.state.expandedFolders.has(folder.id);
         const pl = 10 + depth * 16;
         let childHtml = '';
@@ -313,6 +381,22 @@ export class UIModule {
     setActiveTag(tag) {
         this.app.state.activeTag = tag;
         this.renderResourceTree();
+    }
+
+    // [P1-5] Resource sort
+    setSortMode(mode) {
+        this.app.state.resSortMode = mode;
+        this.renderResourceTree();
+    }
+
+    _sortResources(items) {
+        const mode = this.app.state.resSortMode || 'created';
+        return items.sort((a, b) => {
+            if (mode === 'name') return (a.name || '').localeCompare(b.name || '');
+            if (mode === 'type') return (a.type || '').localeCompare(b.type || '');
+            if (mode === 'updated') return (b.updated || 0) - (a.updated || 0);
+            return (b.created || 0) - (a.created || 0); // default: created desc
+        });
     }
 
     // [Feature 6] handleCreateFolder accepts optional parentId
@@ -481,6 +565,8 @@ export class UIModule {
             body.setAttribute('data-theme', 'dark');
             localStorage.setItem('theme', 'dark');
         }
+        this._updateTooltipTheme();
+        this.app.graph.needsRender = true;
     }
 
     triggerImport() {
@@ -713,17 +799,31 @@ export class UIModule {
         const res = this.app.state.resources.find(r => r.id === resId);
         if (!res) return;
 
+        this._updateTooltipTheme();
+        const isDark = document.body.getAttribute('data-theme') === 'dark';
+
         let content = '';
         if (res.type === 'image') content = `<img src="${res.content}" style="max-width:100%; max-height:200px; display:block; border-radius:4px;">`;
         else if (res.type === 'md') {
             let html = marked.parse(res.content);
             html = this.app.utils.purifyHTML(html);
-            content = `<div class="md-preview" style="background:#f8f9fa; padding:10px; border-radius:4px; max-height:280px; overflow-y:auto;">${html}</div>`;
+            const mdBg = isDark ? '#1e1e1e' : '#f8f9fa';
+            content = `<div class="md-preview" style="background:${mdBg}; padding:10px; border-radius:4px; max-height:280px; overflow-y:auto;">${html}</div>`;
         }
-        else if (res.type === 'code') content = `<pre style="font-family:monospace; background:#282c34; color:#abb2bf; padding:10px; border-radius:4px; font-size:12px; overflow:auto;">${this.app.utils.escapeHtml(res.content)}</pre>`;
-        else if (res.type === 'color') content = `<div style="width:100px; height:60px; background-color:${res.content}; border-radius:4px; border:1px solid #ddd; margin-bottom:5px;"></div><div style="text-align:center; font-family:monospace; font-weight:bold;">${res.content}</div>`;
+        else if (res.type === 'code') {
+            const codeBg = isDark ? '#1e1e1e' : '#282c34';
+            const codeColor = isDark ? '#d4d4d4' : '#abb2bf';
+            content = `<pre style="font-family:monospace; background:${codeBg}; color:${codeColor}; padding:10px; border-radius:4px; font-size:12px; overflow:auto;">${this.app.utils.escapeHtml(res.content)}</pre>`;
+        }
+        else if (res.type === 'color') {
+            const borderC = isDark ? '#3f3f46' : '#ddd';
+            content = `<div style="width:100px; height:60px; background-color:${res.content}; border-radius:4px; border:1px solid ${borderC}; margin-bottom:5px;"></div><div style="text-align:center; font-family:monospace; font-weight:bold;">${res.content}</div>`;
+        }
         else if (res.type === 'audio') content = `<audio controls src="${res.content}" style="width:250px;"></audio>`;
-        else if (res.type === 'link') content = `<div style="font-size:12px; color:#555; margin-bottom:8px; word-break:break-all;">${this.app.utils.escapeHtml(res.content)}</div><a href="${res.content}" target="_blank" style="display:block; text-align:center; background:#667eea; color:white; text-decoration:none; padding:6px; border-radius:4px; font-size:12px;">跳转到链接 🔗</a>`;
+        else if (res.type === 'link') {
+            const linkSub = isDark ? '#a1a1aa' : '#555';
+            content = `<div style="font-size:12px; color:${linkSub}; margin-bottom:8px; word-break:break-all;">${this.app.utils.escapeHtml(res.content)}</div><a href="${res.content}" target="_blank" style="display:block; text-align:center; background:#667eea; color:white; text-decoration:none; padding:6px; border-radius:4px; font-size:12px;">跳转到链接 🔗</a>`;
+        }
 
         this.tooltipEl.innerHTML = content;
         this.tooltipEl.style.display = 'block';
@@ -769,11 +869,24 @@ export class UIModule {
         this.tooltipEl.style.left = left + 'px';
     }
 
-    toast(m) {
-        const t = this.app.dom.toast;
-        t.innerText = m;
-        t.classList.add('show');
-        setTimeout(() => t.classList.remove('show'), 3000);
+    toast(m, type) {
+        const container = document.getElementById('toastContainer');
+        if (!container) return;
+        const el = document.createElement('div');
+        el.className = 'toast' + (type ? ' ' + type : '');
+        el.textContent = m;
+        el.addEventListener('click', () => {
+            el.classList.remove('show');
+            setTimeout(() => el.remove(), 300);
+        });
+        container.appendChild(el);
+        // Trigger reflow then show
+        el.offsetHeight;
+        el.classList.add('show');
+        setTimeout(() => {
+            el.classList.remove('show');
+            setTimeout(() => el.remove(), 300);
+        }, 3000);
     }
 
     exportImage() {

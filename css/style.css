@@ -96,9 +96,10 @@ body {
 .search-box {
     position: relative;
     margin-top: 5px;
+    display: flex; gap: 4px; align-items: center;
 }
 .search-input {
-    width: 100%; padding: 8px 12px 8px 32px;
+    flex: 1; padding: 8px 12px 8px 32px;
     border-radius: var(--radius-md); border: 1px solid var(--border-color);
     background: rgba(128,128,128,0.05); color: var(--text-main);
     font-size: 13px; transition: all 0.2s;
@@ -107,6 +108,11 @@ body {
 .search-icon {
     position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
     font-size: 14px; color: var(--text-sub); pointer-events: none;
+}
+.sort-select {
+    padding: 8px 4px; border-radius: var(--radius-md); border: 1px solid var(--border-color);
+    background: rgba(128,128,128,0.05); color: var(--text-main);
+    font-size: 12px; cursor: pointer; flex-shrink: 0;
 }
 
 .btn-group-mini { display: flex; gap: 8px; }
@@ -557,16 +563,38 @@ canvas:active { cursor: grabbing; }
     right: 8px;
 }
 
-/* Toast notification */
+/* [P1-4] Toast container for stacked toasts */
+.toast-container {
+    position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
+    display: flex; flex-direction: column-reverse; align-items: center; gap: 8px;
+    z-index: 9999; pointer-events: none;
+}
 .toast {
-    position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%) translateY(20px);
     background: #1f2937; color: white; padding: 10px 20px; border-radius: 20px;
-    font-size: 13px; font-weight: 500; pointer-events: none;
-    opacity: 0; transition: opacity 0.3s, transform 0.3s; z-index: 9999;
+    font-size: 13px; font-weight: 500; pointer-events: auto; cursor: pointer;
+    opacity: 0; transform: translateY(10px);
+    transition: opacity 0.3s, transform 0.3s;
     max-width: 80vw; text-align: center; white-space: nowrap;
 }
-.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.toast.show { opacity: 1; transform: translateY(0); }
+.toast.success { background: #16a34a; }
+.toast.error { background: #dc2626; }
 [data-theme="dark"] .toast { background: #f3f4f6; color: #1f2937; }
+[data-theme="dark"] .toast.success { background: #22c55e; color: #fff; }
+[data-theme="dark"] .toast.error { background: #ef4444; color: #fff; }
+
+/* [P1-3] Inline edit input for node labels */
+.inline-edit-input {
+    position: fixed; z-index: 9998;
+    border: 2px solid #6366f1; border-radius: 6px;
+    padding: 2px 8px; font-size: 13px; text-align: center;
+    background: #fff; color: #1f2937; outline: none;
+    font-family: "Segoe UI", sans-serif;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+[data-theme="dark"] .inline-edit-input {
+    background: #27272a; color: #f3f4f6; border-color: #818cf8;
+}
 
 /* [Feature 3] Full-screen viewer modal */
 .viewer-modal {

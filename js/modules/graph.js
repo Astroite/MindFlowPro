@@ -18,6 +18,9 @@ export class GraphModule {
         this.pinchStartScale = 1;
         this.mousePos = { x: 0, y: 0 };
         this.needsRender = true;
+        // [P1-2] Box selection state
+        this.isSelecting = false;
+        this.selectionRect = null;
     }
 
     init() {
@@ -244,7 +247,18 @@ export class GraphModule {
         if (isNaN(n.x) || isNaN(n.y)) return;
 
         if (typeof n.scale === 'undefined') n.scale = 1;
-        if (n.scale < 1) { n.scale += (1 - n.scale) * 0.15; if (n.scale > 0.99) n.scale = 1; }
+
+        // [P0-4] Deleting animation — shrink to 0
+        if (n._deleting) {
+            n.scale *= 0.8;
+            if (n.scale < 0.05) {
+                n._removeNow = true;
+                return;
+            }
+        } else if (n.scale < 1) {
+            n.scale += (1 - n.scale) * 0.15;
+            if (n.scale > 0.99) n.scale = 1;
+        }
 
         const isDark = document.body.getAttribute('data-theme') === 'dark';
         const themeColors = isDark ? (config.colorsDark || config.colors) : config.colors;
@@ -269,6 +283,11 @@ export class GraphModule {
         if (res && res.type === 'color') {
             fillColor = res.content;
             isColorCard = true;
+        }
+
+        // [P0-4] Fade out while deleting
+        if (n._deleting) {
+            ctx.globalAlpha = Math.max(0, n.scale);
         }
 
         // 1. 设置阴影
@@ -410,7 +429,7 @@ export class GraphModule {
         }
 
         // Skip drawing if nothing changed; always draw during node-spawn animation or linking mode
-        const hasAnimatingNodes = this.app.state.nodes.some(n => n.scale < 1);
+        const hasAnimatingNodes = this.app.state.nodes.some(n => n.scale < 1 || n._deleting);
         if (!this.needsRender && !hasAnimatingNodes && !this.app.state.isLinking) {
             requestAnimationFrame(() => this.renderLoop());
             return;
@@ -448,8 +467,70 @@ export class GraphModule {
             if (!this.isNodeVisible(n)) return;
 
             this.drawNode(ctx, n);
-            this.drawPlusButton(ctx, n);
+            if (!n._deleting) this.drawPlusButton(ctx, n);
         });
+
+        // [P0-4] Remove nodes that finished delete animation
+        const toRemove = this.app.state.nodes.filter(n => n._removeNow);
+        if (toRemove.length > 0) {
+            const removeIds = toRemove.map(n => n.id);
+            this.app.state.nodes = this.app.state.nodes.filter(n => !n._removeNow);
+            // Also remove associated links
+            this.app.state.links = this.app.state.links.filter(l => {
+                const sId = typeof l.source === 'object' ? l.source.id : l.source;
+                const tId = typeof l.target === 'object' ? l.target.id : l.target;
+                return !removeIds.includes(sId) && !removeIds.includes(tId);
+            });
+            // Handle orphan promotion
+            this.app.state.nodes.forEach(n => {
+                if (n._deleting) return;
+                const hasIncoming = this.app.state.links.some(l => {
+                    const tId = typeof l.target === 'object' ? l.target.id : l.target;
+                    return tId === n.id;
+                });
+                if (!hasIncoming && n.type === 'sub') {
+                    n.type = 'root';
+                    n.scale = 1;
+                }
+            });
+            this.updateSimulation();
+            this.app.storage.triggerSave();
+        }
+
+        // [P1-1] Empty state guidance
+        if (this.app.state.nodes.length === 0) {
+            ctx.save();
+            ctx.resetTransform();
+            const cx = this.width / 2;
+            const cy = this.height / 2;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.15)';
+            ctx.font = '600 18px "Segoe UI", sans-serif';
+            ctx.fillText('点击 🎯 根节点 创建第一个节点', cx, cy - 14);
+            ctx.font = '14px "Segoe UI", sans-serif';
+            ctx.fillText('拖拽侧边栏资源到画布快速创建节点', cx, cy + 16);
+            ctx.restore();
+        }
+
+        // [P1-2] Draw selection rectangle
+        if (this.selectionRect) {
+            ctx.save();
+            ctx.resetTransform();
+            const { startX, startY, endX, endY } = this.selectionRect;
+            const x = Math.min(startX, endX);
+            const y = Math.min(startY, endY);
+            const w = Math.abs(endX - startX);
+            const h = Math.abs(endY - startY);
+            ctx.fillStyle = 'rgba(99, 102, 241, 0.1)';
+            ctx.strokeStyle = 'rgba(99, 102, 241, 0.6)';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([4, 4]);
+            ctx.fillRect(x, y, w, h);
+            ctx.strokeRect(x, y, w, h);
+            ctx.setLineDash([]);
+            ctx.restore();
+        }
 
         ctx.restore();
         this.app.ui.updateBubblePosition();
@@ -650,6 +731,45 @@ export class GraphModule {
     }
 
     // [New] 计算点击位置是否在连线附近
+    // [P1-3] Inline edit node label
+    inlineEdit(node) {
+        const input = document.getElementById('inlineEditInput');
+        if (!input) return;
+        const cam = this.app.state.camera;
+        const r = (node.type === 'root' ? config.nodeRadius : config.subRadius) * (node.scale || 1);
+        const labelY = node.y + r + 15;
+        const sx = node.x * cam.k + cam.x;
+        const sy = labelY * cam.k + cam.y;
+
+        input.value = node.label || '';
+        input.style.display = 'block';
+        input.style.left = (sx - 60) + 'px';
+        input.style.top = (sy - 14) + 'px';
+        input.style.width = '120px';
+        input.focus();
+        input.select();
+
+        const finish = () => {
+            input.style.display = 'none';
+            input.removeEventListener('blur', onBlur);
+            input.removeEventListener('keydown', onKey);
+        };
+        const save = () => {
+            const val = input.value.trim();
+            if (val && val !== node.label) {
+                this.app.data.updateNode(node.id, { label: val });
+            }
+            finish();
+        };
+        const onBlur = () => save();
+        const onKey = (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); save(); }
+            if (e.key === 'Escape') { e.preventDefault(); finish(); }
+        };
+        input.addEventListener('blur', onBlur);
+        input.addEventListener('keydown', onKey);
+    }
+
     getLinkAtPos(mx, my) {
         const camK = this.app.state.camera.k;
         const threshold = 5 / camK; // 增加点击容差
@@ -846,8 +966,15 @@ export class GraphModule {
                     this.app.state.selectedNodes.clear();
                     this.app.ui.hideNodeBubble();
                 }
-                this.isPanning = true;
-                this.startPan = { x: m.rawX, y: m.rawY };
+                // [P1-2] Shift+drag to pan, plain drag to box-select
+                if (e.shiftKey) {
+                    this.isPanning = true;
+                    this.startPan = { x: m.rawX, y: m.rawY };
+                } else {
+                    this.isSelecting = true;
+                    const rect = canvas.getBoundingClientRect();
+                    this.selectionRect = { startX: m.rawX - rect.left, startY: m.rawY - rect.top, endX: m.rawX - rect.left, endY: m.rawY - rect.top };
+                }
             }
         };
 
@@ -885,13 +1012,18 @@ export class GraphModule {
                 else this.app.ui.hideTooltip();
             }
 
-            if (!this.dragSubject && !this.isPanning) return;
+            if (!this.dragSubject && !this.isPanning && !this.isSelecting) return;
             e.preventDefault();
             const m = getPos(e);
 
             if (this.dragSubject) {
                 this.app.ui.hideNodeBubble();
                 this.dragSubject.fx = m.x; this.dragSubject.fy = m.y;
+            }
+            else if (this.isSelecting) {
+                const rect = canvas.getBoundingClientRect();
+                this.selectionRect.endX = m.rawX - rect.left;
+                this.selectionRect.endY = m.rawY - rect.top;
             }
             else if (this.isPanning) {
                 this.app.ui.hideNodeBubble();
@@ -903,6 +1035,32 @@ export class GraphModule {
         const handleEnd = (e) => {
             this.needsRender = true;
             if (e.touches && e.touches.length < 2) this.pinchStartDist = null;
+
+            // [P1-2] Finalize box selection
+            if (this.isSelecting && this.selectionRect) {
+                const { startX, startY, endX, endY } = this.selectionRect;
+                const minX = Math.min(startX, endX);
+                const maxX = Math.max(startX, endX);
+                const minY = Math.min(startY, endY);
+                const maxY = Math.max(startY, endY);
+
+                // Only select if the rectangle is large enough (>5px)
+                if (maxX - minX > 5 || maxY - minY > 5) {
+                    const cam = this.app.state.camera;
+                    if (!e.shiftKey) this.app.state.selectedNodes.clear();
+                    this.app.state.nodes.forEach(n => {
+                        if (isNaN(n.x) || isNaN(n.y) || n._deleting) return;
+                        const sx = n.x * cam.k + cam.x;
+                        const sy = n.y * cam.k + cam.y;
+                        if (sx >= minX && sx <= maxX && sy >= minY && sy <= maxY) {
+                            this.app.state.selectedNodes.add(n.id);
+                        }
+                    });
+                }
+                this.isSelecting = false;
+                this.selectionRect = null;
+            }
+
             if (this.dragSubject) {
                 this.dragSubject.fx = null; this.dragSubject.fy = null;
                 this.app.state.simulation.alphaTarget(0);
@@ -914,6 +1072,32 @@ export class GraphModule {
             }
             this.isPanning = false;
         };
+
+        // [P0-1] Double-click node to edit label inline
+        canvas.addEventListener('dblclick', (e) => {
+            if (e.target !== canvas) return;
+            const m = getPos(e);
+            for (let i = this.app.state.nodes.length - 1; i >= 0; i--) {
+                const n = this.app.state.nodes[i];
+                const r = (n.type === 'root' ? config.nodeRadius : config.subRadius) * (n.scale || 1);
+                // [P1-3] Check if click is on the label area (below the node)
+                const labelY = n.y + r + 15;
+                const dist = Math.hypot(m.x - n.x, m.y - n.y);
+                const labelDist = Math.hypot(m.x - n.x, m.y - labelY);
+                if (dist < r || labelDist < r * 2) {
+                    e.preventDefault();
+                    this.app.state.selectedNodes.clear();
+                    this.app.state.selectedNodes.add(n.id);
+                    this.app.ui.showNodeBubble(n);
+                    if (labelDist < r * 2) {
+                        this.inlineEdit(n);
+                    } else {
+                        this.app.ui.onBubbleEdit();
+                    }
+                    return;
+                }
+            }
+        });
 
         canvas.addEventListener('mousedown', handleStart);
         canvas.addEventListener('mousemove', handleMove);

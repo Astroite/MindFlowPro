@@ -1,5 +1,5 @@
 export const config = {
-    appVersion: '3.5',
+    appVersion: '3.7',
     nodeRadius: 40,
     subRadius: 30,
     linkDistance: 150,

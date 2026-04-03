@@ -32,6 +32,12 @@
                     <label>
                         <input type="text" class="search-input" placeholder="搜索资源..." oninput="app.ui.filterResources(this.value)">
                     </label>
+                    <select class="sort-select" onchange="app.ui.setSortMode(this.value)" title="排序方式">
+                        <option value="created">创建时间</option>
+                        <option value="updated">更新时间</option>
+                        <option value="name">名称</option>
+                        <option value="type">类型</option>
+                    </select>
                 </div>
                 <div class="btn-group-mini">
                     <button class="btn-icon" title="导出到本地磁盘" onclick="app.storage.triggerSaveDisk()">💾</button>
@@ -224,7 +230,10 @@
     </div>
 </div>
 
-<div class="toast" id="toast"></div>
+<div id="toastContainer" class="toast-container"></div>
+
+<!-- [P1-3] Inline edit input for node labels -->
+<input type="text" id="inlineEditInput" class="inline-edit-input" style="display:none;">
 
 <!-- [Feature 3] Full-screen resource viewer modal -->
 <div class="modal-overlay" id="viewerModal" style="display:none;">

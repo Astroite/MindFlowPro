@@ -8,6 +8,8 @@ export class DataModule {
      */
     constructor(app) {
         this.app = app;
+        this._clipboard = [];
+        this._clipboardLinks = [];
     }
 
     // --- 资源工厂与规范化 ---
@@ -226,44 +228,26 @@ export class DataModule {
         if (!nodeIds || nodeIds.length === 0) return;
 
         this._snapshot();
-        this.app.state.nodes = this.app.state.nodes.filter(n => !nodeIds.includes(n.id));
 
+        // [P0-4] Animate nodes shrinking before removal
+        let hasNodesToAnimate = false;
+        nodeIds.forEach(id => {
+            const node = this.app.state.nodes.find(n => n.id === id);
+            if (node) {
+                node._deleting = true;
+                hasNodesToAnimate = true;
+            }
+        });
+
+        this.app.graph.needsRender = true;
+
+        // Immediately handle link removal and orphan promotion for the data model
         const deadNodeSet = new Set(nodeIds);
-        const survivingLinks = [];
-        const potentialOrphans = new Set();
-
-        this.app.state.links.forEach(l => {
-            // @ts-ignore
-            const sId = l.source.id || l.source;
-            // @ts-ignore
-            const tId = l.target.id || l.target;
-
-            const sourceIsDead = deadNodeSet.has(sId);
-            const targetIsDead = deadNodeSet.has(tId);
-
-            if (sourceIsDead && !targetIsDead) {
-                potentialOrphans.add(tId);
-            } else if (!sourceIsDead && !targetIsDead) {
-                survivingLinks.push(l);
-            }
+        this.app.state.links = this.app.state.links.filter(l => {
+            const sId = typeof l.source === 'object' ? l.source.id : l.source;
+            const tId = typeof l.target === 'object' ? l.target.id : l.target;
+            return !deadNodeSet.has(sId) && !deadNodeSet.has(tId);
         });
-
-        this.app.state.links = survivingLinks;
-
-        potentialOrphans.forEach(orphanId => {
-            // @ts-ignore
-            const hasIncoming = this.app.state.links.some(l => (l.target.id || l.target) === orphanId);
-            if (!hasIncoming) {
-                const orphan = this.app.state.nodes.find(n => n.id === orphanId);
-                if (orphan) {
-                    orphan.type = 'root';
-                    orphan.scale = 1;
-                }
-            }
-        });
-
-        this.app.graph.updateSimulation();
-        this.app.storage.triggerSave();
 
         const msg = nodeIds.length > 1 ? `已删除 ${nodeIds.length} 个节点` : '节点已删除';
         this.app.eventBus.emit('toast', { msg });
@@ -326,5 +310,92 @@ export class DataModule {
         this.app.eventBus.emit('resources:updated');
         this.app.storage.triggerSave();
         if (toastMsg) this.app.eventBus.emit('toast', { msg: toastMsg });
+    }
+
+    // [P0-5] Copy selected nodes to clipboard
+    copySelectedNodes() {
+        if (this.app.state.selectedNodes.size === 0) return;
+        const nodesToCopy = this.app.state.nodes.filter(n => this.app.state.selectedNodes.has(n.id));
+        if (nodesToCopy.length === 0) return;
+
+        // Store node data (excluding position, which will be offset on paste)
+        this._clipboard = nodesToCopy.map(n => ({
+            id: n.id,
+            type: n.type,
+            label: n.label,
+            resId: n.resId,
+            color: n.color,
+            note: n.note,
+            x: n.x,
+            y: n.y
+        }));
+
+        // Also store links between copied nodes
+        const copiedIds = new Set(nodesToCopy.map(n => n.id));
+        this._clipboardLinks = this.app.state.links
+            .filter(l => {
+                const sId = typeof l.source === 'object' ? l.source.id : l.source;
+                const tId = typeof l.target === 'object' ? l.target.id : l.target;
+                return copiedIds.has(sId) && copiedIds.has(tId);
+            })
+            .map(l => ({
+                source: typeof l.source === 'object' ? l.source.id : l.source,
+                target: typeof l.target === 'object' ? l.target.id : l.target,
+                type: l.type
+            }));
+
+        this.app.eventBus.emit('toast', { msg: `已复制 ${nodesToCopy.length} 个节点` });
+    }
+
+    // [P0-5] Paste clipboard nodes at offset position
+    pasteNodes(offsetX = 30, offsetY = 30) {
+        if (!this._clipboard || this._clipboard.length === 0) {
+            return this.app.eventBus.emit('toast', { msg: '剪贴板为空' });
+        }
+
+        this._snapshot();
+
+        // Generate new IDs for pasted nodes
+        const idMap = {};
+        const newNodes = this._clipboard.map(n => {
+            const newId = 'n_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+            idMap[n.id] = newId;
+            return {
+                id: newId,
+                type: n.type,
+                label: n.label || '未命名',
+                resId: n.resId,
+                color: n.color,
+                note: n.note,
+                x: (n.x || 0) + offsetX,
+                y: (n.y || 0) + offsetY,
+                scale: 0.1
+            };
+        });
+
+        // Paste links between pasted nodes with new IDs
+        const newLinks = (this._clipboardLinks || []).map(l => ({
+            source: idMap[l.source] || l.source,
+            target: idMap[l.target] || l.target,
+            type: l.type
+        }));
+
+        this.app.state.nodes.push(...newNodes);
+        this.app.state.links.push(...newLinks);
+
+        // Select the newly pasted nodes
+        this.app.state.selectedNodes.clear();
+        newNodes.forEach(n => this.app.state.selectedNodes.add(n.id));
+
+        this.app.graph.updateSimulation();
+        this.app.storage.triggerSave();
+        this.app.eventBus.emit('toast', { msg: `已粘贴 ${newNodes.length} 个节点` });
+    }
+
+    // [P0-5] Duplicate selected nodes (copy + paste with offset)
+    duplicateSelectedNodes() {
+        if (this.app.state.selectedNodes.size === 0) return;
+        this.copySelectedNodes();
+        this.pasteNodes(30, 30);
     }
 }
