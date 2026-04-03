@@ -207,14 +207,14 @@
 
 <div class="node-menu modern-panel" id="nodeMenu" style="display: none;">
     <div class="panel-header">
-        <h3>✨ 编辑节点</h3>
+        <h3>编辑节点</h3>
         <button class="close-btn" onclick="document.getElementById('nodeMenu').style.display='none'">×</button>
     </div>
 
     <div class="panel-body">
         <div class="form-group">
-            <label class="panel-label">节点名称</label>
-            <label for="nodeLabel"></label><input type="text" id="nodeLabel" class="form-input panel-input" placeholder="输入节点标题...">
+            <label class="panel-label">名称</label>
+            <label for="nodeLabel"></label><input type="text" id="nodeLabel" class="form-input panel-input" placeholder="节点标题...">
         </div>
 
         <div class="form-group">
@@ -223,28 +223,68 @@
                 <label for="nodeResSelect"></label><select id="nodeResSelect" class="form-input panel-select"></select>
                 <span class="select-arrow">▼</span>
             </div>
-            <small class="panel-hint">关联后，悬浮节点即可预览内容</small>
         </div>
 
-        <div class="form-group">
-            <label class="panel-label">节点颜色</label>
-            <div style="display:flex;align-items:center;gap:10px;">
-                <input type="color" id="nodeColor" style="width:44px;height:36px;border:1px solid var(--border-color);border-radius:6px;padding:2px;cursor:pointer;background:none;">
-                <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
-                    <input type="checkbox" id="nodeUseColor" style="width:14px;height:14px;">
-                    使用自定义颜色
-                </label>
+        <div class="form-group form-row">
+            <label class="panel-label">颜色</label>
+            <div style="display:flex;gap:8px;align-items:center;">
+                <input type="color" id="nodeColor" style="width:36px;height:30px;border:1px solid var(--border-color);border-radius:6px;padding:2px;cursor:pointer;background:none;">
+                <button type="button" id="nodeColorReset" class="btn-sm" title="重置为默认颜色">重置</button>
+            </div>
+        </div>
+
+        <div class="form-group form-row">
+            <label class="panel-label">质感</label>
+            <div class="texture-options" style="display:flex;gap:6px;flex:1;">
+                <button type="button" class="texture-btn" data-texture="glass">玻璃</button>
+                <button type="button" class="texture-btn" data-texture="acrylic">亚克力</button>
+                <button type="button" class="texture-btn" data-texture="metallic">金属</button>
+            </div>
+        </div>
+
+        <div class="form-group form-row">
+            <label class="panel-label">布局</label>
+            <div class="layout-options" style="display:flex;gap:6px;flex:1;">
+                <button type="button" class="layout-btn" data-layout="icon">图标</button>
+                <button type="button" class="layout-btn" data-layout="card">卡片</button>
+            </div>
+        </div>
+
+        <div class="form-group form-row" id="shapeRatioRow">
+            <label class="panel-label" id="shapeRatioLabel">形状</label>
+            <div id="shapeOptions" class="shape-options" style="display:flex;gap:6px;flex:1;">
+                <button type="button" class="shape-btn" data-shape="circle" title="圆形">●</button>
+                <button type="button" class="shape-btn" data-shape="rounded-rect" title="圆角方形">▢</button>
+            </div>
+            <div id="ratioOptions" class="ratio-options" style="display:none;gap:6px;flex:1;">
+                <button type="button" class="ratio-btn" data-ratio="1:1">1:1</button>
+                <button type="button" class="ratio-btn" data-ratio="3:4">3:4</button>
+                <button type="button" class="ratio-btn" data-ratio="4:3">4:3</button>
+                <button type="button" class="ratio-btn" data-ratio="16:9">16:9</button>
+            </div>
+        </div>
+
+        <div class="form-group form-row">
+            <label class="panel-label">边框</label>
+            <div class="select-wrapper" style="flex:1;">
+                <select id="nodeBorderStyle" class="form-input panel-select" style="font-size:12px;">
+                    <option value="solid">实线</option>
+                    <option value="glow">发光</option>
+                    <option value="double">双线</option>
+                    <option value="gradient">渐变</option>
+                </select>
+                <span class="select-arrow">▼</span>
             </div>
         </div>
 
         <div class="form-group">
-            <label class="panel-label">节点备注</label>
-            <textarea id="nodeNote" class="form-input panel-input" rows="3" placeholder="添加备注..."></textarea>
+            <label class="panel-label">备注</label>
+            <textarea id="nodeNote" class="form-input panel-input" rows="2" placeholder="备注..."></textarea>
         </div>
     </div>
 
     <div class="panel-footer">
-        <button class="btn-primary full-width" onclick="app.ui.handleSaveNodeEdit()">保存修改</button>
+        <button class="btn-primary full-width" onclick="app.ui.handleSaveNodeEdit()">保存</button>
     </div>
 </div>
 

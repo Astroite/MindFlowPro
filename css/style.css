@@ -677,3 +677,59 @@ canvas:active { cursor: grabbing; }
     display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 12px; font-family: monospace;
     background: rgba(128,128,128,0.12); border: 1px solid var(--border-color); color: var(--text-main);
 }
+
+/* Node appearance controls — shape/layout/texture/ratio active state */
+.shape-btn, .layout-btn, .texture-btn, .ratio-btn {
+    transition: background 0.15s, color 0.15s;
+    flex: 1;
+    padding: 4px 0;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: var(--bg-app);
+    cursor: pointer;
+    font-size: 12px;
+}
+.shape-btn.active, .layout-btn.active, .texture-btn.active, .ratio-btn.active {
+    background: var(--primary, #6366f1) !important;
+    color: #fff !important;
+    font-weight: bold;
+    border-color: var(--primary, #6366f1) !important;
+}
+.shape-btn:hover, .layout-btn:hover, .texture-btn:hover, .ratio-btn:hover {
+    background: rgba(99, 102, 241, 0.1);
+}
+
+/* Form row: label left, options right */
+.form-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.form-row .panel-label {
+    margin: 0;
+    min-width: 40px;
+    flex-shrink: 0;
+}
+
+/* Small reset button */
+.btn-sm {
+    padding: 3px 10px;
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-app);
+    cursor: pointer;
+    font-size: 11px;
+    color: var(--text-sub);
+    transition: all 0.15s;
+}
+.btn-sm:hover {
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+    border-color: #ef4444;
+}
+
+/* Scrollable node menu for small screens */
+.node-menu .panel-body {
+    max-height: 60vh;
+    overflow-y: auto;
+}

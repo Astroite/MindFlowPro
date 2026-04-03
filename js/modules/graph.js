@@ -249,6 +249,42 @@ export class GraphModule {
         return lines.length > 0 ? lines : [''];
     }
 
+    // --- Node appearance system ---
+
+    /**
+     * Draw the shape path for a node (beginPath + path, no fill/stroke)
+     */
+    drawNodeShape(ctx, cx, cy, r, shape) {
+        ctx.beginPath();
+        if (shape === 'rounded-rect') {
+            ctx.roundRect(cx - r, cy - r, r * 2, r * 2, r * 0.35);
+        } else {
+            ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        }
+    }
+
+    hitTestNode(px, py, n) {
+        const r = (n.type === 'root' ? config.nodeRadius : config.subRadius) * (n.scale || 1);
+        const dx = px - n.x, dy = py - n.y;
+        const shape = n.shape || 'circle';
+        if (shape === 'rounded-rect') return Math.abs(dx) < r && Math.abs(dy) < r;
+        return Math.hypot(dx, dy) < r;
+    }
+
+    getCardDimensions(n) {
+        const ratio = n.cardRatio;
+        if (ratio && config.cardRatios && config.cardRatios[ratio]) {
+            const dims = config.cardRatios[ratio];
+            return { w: dims.w * (n.scale || 1), h: dims.h * (n.scale || 1) };
+        }
+        return { w: config.cardWidth * (n.scale || 1), h: config.cardHeight * (n.scale || 1) };
+    }
+
+    hitTestCard(px, py, n) {
+        const { w, h } = this.getCardDimensions(n);
+        return Math.abs(px - n.x) < w / 2 && Math.abs(py - n.y) < h / 2;
+    }
+
     drawNode(ctx, n) {
         if (isNaN(n.x) || isNaN(n.y)) return;
 
@@ -270,6 +306,7 @@ export class GraphModule {
         const themeColors = isDark ? (config.colorsDark || config.colors) : config.colors;
 
         const r = (n.type === 'root' ? config.nodeRadius : config.subRadius) * (n.scale || 1);
+        const shape = n.shape || 'circle';
 
         let fillColor = themeColors.surface;
         let textColor = themeColors.textMain;
@@ -296,6 +333,13 @@ export class GraphModule {
             ctx.globalAlpha = Math.max(0, n.scale);
         }
 
+        // --- Card layout mode ---
+        if (n.layout === 'card') {
+            this.drawCardLayout(ctx, n, themeColors, textColor, res, isDark);
+            ctx.globalAlpha = 1;
+            return;
+        }
+
         // 1. 设置阴影
         if (n.type === 'root' && !isColorCard) {
             ctx.shadowColor = 'rgba(0,0,0,0.2)';
@@ -315,24 +359,27 @@ export class GraphModule {
         // 2. 绘制节点背景
         if (isColorCard) {
             ctx.save();
-            ctx.beginPath();
-            ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+            this.drawNodeShape(ctx, n.x, n.y, r, shape);
             ctx.fillStyle = '#ffffff';
             ctx.fill();
             ctx.restore();
         }
 
-        ctx.beginPath();
-        ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+        this.drawNodeShape(ctx, n.x, n.y, r, shape);
         ctx.fillStyle = fillColor;
         ctx.fill();
 
         ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
 
+        // 2b. Texture effect overlay
+        if (n.texture) {
+            this.drawTextureEffect(ctx, n.x, n.y, r, shape, n.texture);
+        }
+
         // 3. 绘制内容
         if (res) {
             if (res.type === 'image') {
-                this.drawImageInNode(ctx, n, res, r);
+                this.drawImageInNode(ctx, n, res, r, shape);
             }
             else if (res.type !== 'color') {
                 let icon = '🔗';
@@ -355,37 +402,49 @@ export class GraphModule {
         }
 
         // 4. 绘制边框
-        if (n.type === 'root') {
-            if (!res || res.type !== 'color') {
+        const borderStyle = n.borderStyle || 'solid';
+        if (borderStyle !== 'solid' && !isColorCard) {
+            const borderColor = (n.type === 'root') ? 'rgba(255,255,255,0.4)' : themeColors.outline;
+            this.drawBorder(ctx, n.x, n.y, r, shape, borderStyle, borderColor);
+        } else {
+            // Default solid border
+            this.drawNodeShape(ctx, n.x, n.y, r, shape);
+            if (n.type === 'root') {
+                if (!res || res.type !== 'color') {
+                    ctx.lineWidth = 2;
+                    ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+                    ctx.stroke();
+                }
+            } else if (!res || res.type !== 'color') {
+                ctx.lineWidth = 1.5;
+                ctx.strokeStyle = themeColors.outline;
+                ctx.stroke();
+            } else if (res && res.type === 'color') {
                 ctx.lineWidth = 2;
-                ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+                ctx.strokeStyle = '#ffffff';
                 ctx.stroke();
             }
-        } else if (!res || res.type !== 'color') {
-            ctx.lineWidth = 1.5;
-            ctx.strokeStyle = themeColors.outline;
-            ctx.stroke();
-        } else if (res && res.type === 'color') {
-            ctx.lineWidth = 2;
-            ctx.strokeStyle = '#ffffff';
-            ctx.stroke();
         }
 
         // 5. 选中高亮
         if (this.app.state.selectedNodes.has(n.id) || (this.app.state.isLinking && this.app.state.linkingSourceNode && this.app.state.linkingSourceNode.id === n.id)) {
-            ctx.beginPath(); ctx.arc(n.x, n.y, r + 5, 0, Math.PI * 2);
+            this.drawNodeShape(ctx, n.x, n.y, r + 5, shape);
             ctx.strokeStyle = themeColors.selection; ctx.lineWidth = 2; ctx.stroke();
         }
 
         // [P2-2] Search match highlight
         if (this.searchMatchNodeId === n.id) {
-            ctx.beginPath(); ctx.arc(n.x, n.y, r + 8, 0, Math.PI * 2);
+            this.drawNodeShape(ctx, n.x, n.y, r + 8, shape);
             ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 3;
             ctx.setLineDash([6, 4]); ctx.stroke(); ctx.setLineDash([]);
         }
 
         // 6. 绘制文字 [Feature 2] — text wrapping
         ctx.globalAlpha = n.scale;
+        // Textured nodes: force high-contrast text
+        if (n.texture) {
+            textColor = isDark ? '#f3f4f6' : '#1f2937';
+        }
         ctx.fillStyle = textColor;
 
         ctx.font = `${n.type==='root'?'bold':''} ${12 * n.scale}px "Segoe UI", sans-serif`;
@@ -408,6 +467,235 @@ export class GraphModule {
             ctx.arc(noteX, noteY, 5, 0, Math.PI * 2);
             ctx.fillStyle = '#f59e0b';
             ctx.fill();
+        }
+    }
+
+    // --- Glass / Acrylic effect ---
+
+    drawTextureEffect(ctx, cx, cy, r, shape, texture) {
+        if (texture === 'glass') {
+            const grad = ctx.createLinearGradient(cx, cy - r, cx, cy + r);
+            grad.addColorStop(0, 'rgba(255,255,255,0.35)');
+            grad.addColorStop(0.4, 'rgba(255,255,255,0.12)');
+            grad.addColorStop(1, 'rgba(255,255,255,0.03)');
+            this.drawNodeShape(ctx, cx, cy, r, shape);
+            ctx.fillStyle = grad;
+            ctx.fill();
+            const hl = ctx.createRadialGradient(cx, cy - r * 0.4, 0, cx, cy - r * 0.4, r * 0.7);
+            hl.addColorStop(0, 'rgba(255,255,255,0.25)');
+            hl.addColorStop(1, 'rgba(255,255,255,0)');
+            this.drawNodeShape(ctx, cx, cy, r, shape);
+            ctx.fillStyle = hl;
+            ctx.fill();
+            const shadow = ctx.createLinearGradient(cx, cy, cx, cy + r);
+            shadow.addColorStop(0, 'rgba(0,0,0,0)');
+            shadow.addColorStop(1, 'rgba(0,0,0,0.06)');
+            this.drawNodeShape(ctx, cx, cy, r, shape);
+            ctx.fillStyle = shadow;
+            ctx.fill();
+        } else if (texture === 'acrylic') {
+            // Frosted matte: diffuse soft gradient, lower alpha
+            const grad = ctx.createLinearGradient(cx, cy - r, cx, cy + r);
+            grad.addColorStop(0, 'rgba(255,255,255,0.20)');
+            grad.addColorStop(0.5, 'rgba(255,255,255,0.08)');
+            grad.addColorStop(1, 'rgba(255,255,255,0.04)');
+            this.drawNodeShape(ctx, cx, cy, r, shape);
+            ctx.fillStyle = grad;
+            ctx.fill();
+            // Broad soft highlight
+            const hl = ctx.createRadialGradient(cx, cy - r * 0.2, 0, cx, cy - r * 0.2, r * 0.9);
+            hl.addColorStop(0, 'rgba(255,255,255,0.12)');
+            hl.addColorStop(1, 'rgba(255,255,255,0)');
+            this.drawNodeShape(ctx, cx, cy, r, shape);
+            ctx.fillStyle = hl;
+            ctx.fill();
+            // Matte overlay
+            this.drawNodeShape(ctx, cx, cy, r, shape);
+            ctx.fillStyle = 'rgba(128,128,128,0.04)';
+            ctx.fill();
+        } else if (texture === 'metallic') {
+            // Sharp specular band across upper third
+            const grad = ctx.createLinearGradient(cx, cy - r, cx, cy + r);
+            grad.addColorStop(0, 'rgba(255,255,255,0.10)');
+            grad.addColorStop(0.25, 'rgba(255,255,255,0.40)');
+            grad.addColorStop(0.35, 'rgba(255,255,255,0.10)');
+            grad.addColorStop(0.6, 'rgba(0,0,0,0.05)');
+            grad.addColorStop(1, 'rgba(0,0,0,0.12)');
+            this.drawNodeShape(ctx, cx, cy, r, shape);
+            ctx.fillStyle = grad;
+            ctx.fill();
+            // Subtle edge highlight
+            this.drawNodeShape(ctx, cx, cy, r, shape);
+            ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }
+    }
+
+    // --- Card layout ---
+
+    drawCardLayout(ctx, n, themeColors, textColor, res, isDark) {
+        const { w, h } = this.getCardDimensions(n);
+        const x = n.x - w / 2, y = n.y - h / 2;
+        const scale = n.scale || 1;
+        const cornerR = 8 * scale;
+        const imgH = h * config.cardImageRatio;
+
+        // Determine resource icon
+        let icon = '';
+        if (res) {
+            if (res.type === 'md') icon = '📝';
+            else if (res.type === 'code') icon = '💻';
+            else if (res.type === 'audio') icon = '🎵';
+            else if (res.type === 'link') icon = '🔗';
+        }
+
+        // Shadow
+        ctx.shadowColor = 'rgba(0,0,0,0.1)';
+        ctx.shadowBlur = 12 * scale;
+        ctx.shadowOffsetY = 4 * scale;
+        ctx.shadowOffsetX = 0;
+
+        // Background
+        ctx.beginPath();
+        ctx.roundRect(x, y, w, h, cornerR);
+        ctx.fillStyle = n.color || themeColors.surface;
+        ctx.fill();
+
+        // Card border (always drawn so the card is visible)
+        ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+        ctx.beginPath();
+        ctx.roundRect(x, y, w, h, cornerR);
+        ctx.strokeStyle = themeColors.outline;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Texture overlay on card
+        if (n.texture) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.roundRect(x, y, w, h, cornerR);
+            ctx.clip();
+            this.drawTextureEffect(ctx, n.x, n.y, Math.max(w, h) / 2, 'rounded-rect', n.texture);
+            ctx.restore();
+        }
+
+        // Image / icon area (top 60%)
+        if (res && res.type === 'image') {
+            ctx.save();
+            ctx.beginPath();
+            ctx.roundRect(x, y, w, imgH, [cornerR, cornerR, 0, 0]);
+            ctx.clip();
+            if (!this.imageCache.has(res.id)) {
+                const img = new Image(); img.src = res.content;
+                img.onload = () => this.imageCache.set(res.id, img);
+                this.imageCache.set(res.id, 'loading');
+            }
+            const img = this.imageCache.get(res.id);
+            if (img && img !== 'loading') {
+                const scaleImg = Math.max(w / img.width, imgH / img.height);
+                ctx.drawImage(img, n.x - img.width * scaleImg / 2, y + imgH / 2 - img.height * scaleImg / 2, img.width * scaleImg, img.height * scaleImg);
+            }
+            ctx.restore();
+        } else if (icon) {
+            ctx.font = `${24 * scale}px Arial`;
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillStyle = (n.type === 'root') ? 'rgba(255,255,255,0.9)' : '#f59e0b';
+            ctx.fillText(icon, n.x, y + imgH / 2);
+        } else {
+            // Empty state — show a small icon so the card isn't blank
+            ctx.font = `${20 * scale}px Arial`;
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillStyle = isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.12)';
+            ctx.fillText('💡', n.x, y + imgH / 2);
+        }
+
+        // Separator line
+        ctx.beginPath();
+        ctx.moveTo(x + 8 * scale, y + imgH);
+        ctx.lineTo(x + w - 8 * scale, y + imgH);
+        ctx.strokeStyle = themeColors.outline;
+        ctx.lineWidth = 0.5;
+        ctx.stroke();
+
+        // Label area (bottom 40%)
+        if (n.texture) {
+            textColor = isDark ? '#f3f4f6' : '#1f2937';
+        }
+        ctx.fillStyle = textColor;
+        ctx.font = `${n.type === 'root' ? 'bold ' : ''}${11 * scale}px "Segoe UI", sans-serif`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+
+        const labelAreaY = y + imgH + (h - imgH) / 2;
+        const maxW = w - 12 * scale;
+        const lines = this.wrapText(ctx, n.label || '', maxW);
+        const lineH = 13 * scale;
+        const startY = labelAreaY - ((lines.length - 1) * lineH) / 2;
+        lines.forEach((line, i) => ctx.fillText(line, n.x, startY + i * lineH));
+
+        // Selection highlight
+        if (this.app.state.selectedNodes.has(n.id)) {
+            ctx.beginPath();
+            ctx.roundRect(x - 3, y - 3, w + 6, h + 6, cornerR + 2);
+            ctx.strokeStyle = themeColors.selection; ctx.lineWidth = 2; ctx.stroke();
+        }
+
+        // Search match highlight
+        if (this.searchMatchNodeId === n.id) {
+            ctx.beginPath();
+            ctx.roundRect(x - 5, y - 5, w + 10, h + 10, cornerR + 3);
+            ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 3;
+            ctx.setLineDash([6, 4]); ctx.stroke(); ctx.setLineDash([]);
+        }
+
+        // Note indicator
+        if (n.note && n.scale >= 0.9) {
+            ctx.beginPath();
+            ctx.arc(x + 6, y + 6, 5, 0, Math.PI * 2);
+            ctx.fillStyle = '#f59e0b';
+            ctx.fill();
+        }
+    }
+
+    // --- Advanced border styles ---
+
+    drawBorder(ctx, cx, cy, r, shape, style, color) {
+        if (style === 'glow') {
+            ctx.save();
+            ctx.shadowColor = color;
+            ctx.shadowBlur = 15;
+            this.drawNodeShape(ctx, cx, cy, r, shape);
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            ctx.restore();
+        } else if (style === 'double') {
+            ctx.save();
+            this.drawNodeShape(ctx, cx, cy, r, shape);
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 4;
+            ctx.globalAlpha = 0.3;
+            ctx.stroke();
+            this.drawNodeShape(ctx, cx, cy, r - 2, shape);
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1.5;
+            ctx.globalAlpha = 1;
+            ctx.stroke();
+            ctx.restore();
+        } else if (style === 'gradient') {
+            ctx.save();
+            // Use conic gradient for rainbow border effect
+            const grad = ctx.createConicGradient(0, cx, cy);
+            grad.addColorStop(0, '#6366f1');
+            grad.addColorStop(0.25, '#ec4899');
+            grad.addColorStop(0.5, '#f59e0b');
+            grad.addColorStop(0.75, '#22c55e');
+            grad.addColorStop(1, '#6366f1');
+            this.drawNodeShape(ctx, cx, cy, r, shape);
+            ctx.strokeStyle = grad;
+            ctx.lineWidth = 3;
+            ctx.stroke();
+            ctx.restore();
         }
     }
 
@@ -755,7 +1043,12 @@ export class GraphModule {
             if (res&&res.type==='color') fill=res.content;
             const stroke = n.type==='root' ? 'rgba(255,255,255,0.2)' : colors.outline;
             const sw = n.type==='root' ? 2 : 1.5;
-            parts.push(`<circle cx="${nx}" cy="${ny}" r="${r}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`);
+            const shape = n.shape || 'circle';
+            if (shape === 'rounded-rect') {
+                parts.push(`<rect x="${nx-r}" y="${ny-r}" width="${r*2}" height="${r*2}" rx="${r*0.35}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`);
+            } else {
+                parts.push(`<circle cx="${nx}" cy="${ny}" r="${r}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`);
+            }
             // Resource icon
             if (res&&res.type!=='color'&&res.type!=='image') {
                 const icons={md:'📝',code:'💻',audio:'🎵',link:'🔗'};
@@ -784,7 +1077,7 @@ export class GraphModule {
         this.app.ui.toast('SVG 已导出');
     }
 
-    drawImageInNode(ctx, node, res, r) {
+    drawImageInNode(ctx, node, res, r, shape) {
         if (!this.imageCache.has(res.id)) {
             const img = new Image(); img.src = res.content;
             img.onload = () => this.imageCache.set(res.id, img);
@@ -792,8 +1085,9 @@ export class GraphModule {
         }
         const img = this.imageCache.get(res.id);
         if (img && img !== 'loading') {
-            ctx.save(); ctx.beginPath();
-            ctx.arc(node.x, node.y, r - 2, 0, Math.PI * 2); ctx.clip();
+            ctx.save();
+            this.drawNodeShape(ctx, node.x, node.y, r - 2, shape || 'circle');
+            ctx.clip();
             const scale = Math.max((r*2)/img.width, (r*2)/img.height);
             ctx.drawImage(img, node.x - img.width*scale/2, node.y - img.height*scale/2, img.width*scale, img.height*scale);
             ctx.restore();
@@ -949,7 +1243,7 @@ export class GraphModule {
             const resId = e.dataTransfer.getData('text/plain');
             if (!resId) return;
             const m = getPos(e);
-            const hitNode = this.app.state.nodes.find(n => Math.hypot(m.x - n.x, m.y - n.y) < (n.type==='root'?config.nodeRadius:config.subRadius));
+            const hitNode = this.app.state.nodes.find(n => n.layout==='card' ? this.hitTestCard(m.x, m.y, n) : this.hitTestNode(m.x, m.y, n));
             if (hitNode) {
                 this.app.data._snapshot();
                 hitNode.resId = resId;
@@ -1027,7 +1321,7 @@ export class GraphModule {
                 if (!this.app.state.isLinking && Math.hypot(m.x - (n.x + r*0.707), m.y - (n.y + r*0.707)) < 15) {
                     this.addChildNode(n); return;
                 }
-                if (Math.hypot(m.x - n.x, m.y - n.y) < r) { hitNode = n; break; }
+                if (n.layout==='card' ? this.hitTestCard(m.x, m.y, n) : this.hitTestNode(m.x, m.y, n)) { hitNode = n; break; }
             }
 
             // 飞线模式
@@ -1125,7 +1419,7 @@ export class GraphModule {
                 for (let i = this.app.state.nodes.length - 1; i >= 0; i--) {
                     const n = this.app.state.nodes[i];
                     const r = (n.type === 'root' ? config.nodeRadius : config.subRadius) * (n.scale || 1);
-                    if (Math.hypot(m.x - n.x, m.y - n.y) < r) { hoverNode = n; break; }
+                    if (n.layout==='card' ? this.hitTestCard(m.x, m.y, n) : this.hitTestNode(m.x, m.y, n)) { hoverNode = n; break; }
                 }
                 // [Feature 7] Show tooltip for note too
                 if (hoverNode && (hoverNode.resId || hoverNode.note) && !this.app.state.isLinking) this.app.ui.showTooltip(hoverNode, e.clientX, e.clientY);
@@ -1202,9 +1496,9 @@ export class GraphModule {
                 const r = (n.type === 'root' ? config.nodeRadius : config.subRadius) * (n.scale || 1);
                 // [P1-3] Check if click is on the label area (below the node)
                 const labelY = n.y + r + 15;
-                const dist = Math.hypot(m.x - n.x, m.y - n.y);
+                const hit = n.layout==='card' ? this.hitTestCard(m.x, m.y, n) : this.hitTestNode(m.x, m.y, n);
                 const labelDist = Math.hypot(m.x - n.x, m.y - labelY);
-                if (dist < r || labelDist < r * 2) {
+                if (hit || labelDist < r * 2) {
                     e.preventDefault();
                     this.app.state.selectedNodes.clear();
                     this.app.state.selectedNodes.add(n.id);

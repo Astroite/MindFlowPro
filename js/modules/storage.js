@@ -104,7 +104,11 @@ export class StorageModule {
 
             this.app.state.currentId = id;
             this.app.state.fileHandle = null;
-            this.app.state.nodes = (proj.nodes || []).map(n => ({...n, scale: 1}));
+            this.app.state.nodes = (proj.nodes || []).map(n => ({
+                ...n, scale: 1,
+                texture: n.texture || (n.glass ? 'glass' : null),
+                shape: n.shape === 'pill' ? 'circle' : n.shape,
+            }));
             this.app.state.links = JSON.parse(JSON.stringify(proj.links || []));
             this.app.state.resources = (proj.resources || []).map(r => ({ ...r, parentId: r.parentId || null }));
 
@@ -153,9 +157,14 @@ export class StorageModule {
         this.app.ui.updateSaveStatus('保存中...');
         const currentProjName = this.app.dom.projTitleInput.value || '未命名项目';
 
-        const cleanNodes = this.app.state.nodes.map(n => ({
+        const cleanNodes = this.app.state.nodes
+            .filter(n => !n._deleting && !n._removeNow)
+            .map(n => ({
             id: n.id, type: n.type, x: n.x, y: n.y, label: n.label, resId: n.resId,
-            color: n.color || null, note: n.note || null
+            color: n.color || null, note: n.note || null,
+            shape: n.shape || null, texture: n.texture || null,
+            layout: n.layout || null, borderStyle: n.borderStyle || null,
+            cardRatio: n.cardRatio || null
         }));
         const cleanLinks = this.app.state.links.map(l => ({
             source: l.source.id || l.source,
@@ -229,7 +238,13 @@ export class StorageModule {
             meta: { version: config.appVersion, type: 'MindFlowProject', exportedAt: Date.now() },
             project: {
                 name: currentProjName,
-                nodes: this.app.state.nodes.map(n => ({ id: n.id, type: n.type, x: n.x, y: n.y, label: n.label, resId: n.resId })),
+                nodes: this.app.state.nodes.map(n => ({
+                    id: n.id, type: n.type, x: n.x, y: n.y, label: n.label, resId: n.resId,
+                    color: n.color || null, note: n.note || null,
+                    shape: n.shape || null, texture: n.texture || null,
+                    layout: n.layout || null, borderStyle: n.borderStyle || null,
+                    cardRatio: n.cardRatio || null
+                })),
                 links: this.app.state.links.map(l => ({
                     source: l.source.id || l.source,
                     target: l.target.id || l.target,

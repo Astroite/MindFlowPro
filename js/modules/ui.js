@@ -15,6 +15,7 @@ export class UIModule {
         this.initTooltip();
         this.bindGlobalEvents();
         this.setupInputModal();
+        this.setupShapeLayoutButtons();
 
         this.app.eventBus.on('resources:updated', () => this.renderResourceTree());
         this.app.eventBus.on('nodes:deleted', () => {
@@ -94,6 +95,56 @@ export class UIModule {
         input.addEventListener('keyup', (e) => {
             if (e.key === 'Enter') confirmHandler();
             if (e.key === 'Escape') cancelHandler();
+        });
+    }
+
+    setupShapeLayoutButtons() {
+        this._colorChanged = false;
+        this._colorReset = false;
+
+        // Shape buttons
+        document.querySelectorAll('.shape-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.shape-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            });
+        });
+        // Layout buttons — also toggle shape/ratio row
+        document.querySelectorAll('.layout-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.layout-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                const isCard = btn.dataset.layout === 'card';
+                document.getElementById('shapeOptions').style.display = isCard ? 'none' : 'flex';
+                document.getElementById('ratioOptions').style.display = isCard ? 'flex' : 'none';
+                document.getElementById('shapeRatioLabel').textContent = isCard ? '比例' : '形状';
+            });
+        });
+        // Texture buttons — mutually exclusive toggle (click active to deselect)
+        document.querySelectorAll('.texture-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const wasActive = btn.classList.contains('active');
+                document.querySelectorAll('.texture-btn').forEach(b => b.classList.remove('active'));
+                if (!wasActive) btn.classList.add('active');
+            });
+        });
+        // Ratio buttons
+        document.querySelectorAll('.ratio-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.ratio-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            });
+        });
+        // Color auto-enable on change
+        document.getElementById('nodeColor').addEventListener('input', () => {
+            this._colorChanged = true;
+            this._colorReset = false;
+        });
+        // Color reset button
+        document.getElementById('nodeColorReset').addEventListener('click', () => {
+            this._colorReset = true;
+            this._colorChanged = false;
+            document.getElementById('nodeColor').value = '#6366f1';
         });
     }
 
@@ -501,7 +552,7 @@ export class UIModule {
         if (ids.length === 0) return this.toast('请先选择资源');
         const confirmed = await this.confirmDialog(`确定删除选中的 ${ids.length} 项资源吗？`);
         if (!confirmed) return;
-        ids.forEach(id => this.app.data.deleteResource(id));
+        this.app.data.batchDeleteResources(ids);
         this.app.state._batchSelected.clear();
         document.getElementById('batchCount').textContent = '已选 0 项';
         this.toast(`已删除 ${ids.length} 项`);
@@ -513,12 +564,8 @@ export class UIModule {
         const ids = [...this.app.state._batchSelected];
         if (ids.length === 0) return this.toast('请先选择资源');
         const parentId = targetId === '__root__' ? null : targetId;
-        ids.forEach(id => {
-            const res = this.app.state.resources.find(r => r.id === id);
-            if (res) res.parentId = parentId;
-        });
+        ids.forEach(id => this.app.data.moveResource(id, parentId));
         this.app.state._batchSelected.clear();
-        this.app.storage.triggerSave();
         this.renderResourceTree();
         this.toast(`已移动 ${ids.length} 项`);
     }
@@ -636,12 +683,21 @@ export class UIModule {
         if (node) {
             const label = document.getElementById('nodeLabel').value;
             const resId = document.getElementById('nodeResSelect').value || null;
-            // [Feature 4] Color
-            const useColor = document.getElementById('nodeUseColor').checked;
-            const color = useColor ? document.getElementById('nodeColor').value : null;
-            // [Feature 7] Note
+            // Color: auto-enable on change, reset clears
+            const color = this._colorReset ? null : (this._colorChanged ? document.getElementById('nodeColor').value : node.color);
+            // Note
             const note = document.getElementById('nodeNote') ? document.getElementById('nodeNote').value.trim() || null : null;
-            this.app.data.updateNode(node.id, { label, resId, color, note });
+            // Appearance
+            const activeShape = document.querySelector('.shape-btn.active');
+            const shape = activeShape ? activeShape.dataset.shape : (node.shape || 'circle');
+            const activeLayout = document.querySelector('.layout-btn.active');
+            const layout = activeLayout ? activeLayout.dataset.layout : (node.layout || 'icon');
+            const activeTexture = document.querySelector('.texture-btn.active');
+            const texture = activeTexture ? activeTexture.dataset.texture : null;
+            const borderStyle = document.getElementById('nodeBorderStyle') ? document.getElementById('nodeBorderStyle').value : 'solid';
+            const activeRatio = document.querySelector('.ratio-btn.active');
+            const cardRatio = activeRatio ? activeRatio.dataset.ratio : null;
+            this.app.data.updateNode(node.id, { label, resId, color, note, shape, layout, texture, borderStyle, cardRatio });
             document.getElementById('nodeMenu').style.display = 'none';
         }
     }
@@ -739,20 +795,48 @@ export class UIModule {
             `<option value="${r.id}" ${r.id===node.resId?'selected':''}>${r.name}</option>`
         ).join('');
 
-        // [Feature 4] Color
+        // Color
+        this._colorChanged = false;
+        this._colorReset = false;
         const colorInput = document.getElementById('nodeColor');
-        const useColorCb = document.getElementById('nodeUseColor');
         if (colorInput) colorInput.value = node.color || '#6366f1';
-        if (useColorCb) useColorCb.checked = !!node.color;
 
-        // [Feature 7] Note
+        // Note
         const noteEl = document.getElementById('nodeNote');
         if (noteEl) noteEl.value = node.note || '';
+
+        // Shape
+        document.querySelectorAll('.shape-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.shape === (node.shape || 'circle'));
+        });
+
+        // Texture
+        document.querySelectorAll('.texture-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.texture === (node.texture || ''));
+        });
+
+        // Layout
+        const isCard = (node.layout || 'icon') === 'card';
+        document.querySelectorAll('.layout-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.layout === (node.layout || 'icon'));
+        });
+        document.getElementById('shapeOptions').style.display = isCard ? 'none' : 'flex';
+        document.getElementById('ratioOptions').style.display = isCard ? 'flex' : 'none';
+        document.getElementById('shapeRatioLabel').textContent = isCard ? '比例' : '形状';
+
+        // Card ratio
+        document.querySelectorAll('.ratio-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.ratio === (node.cardRatio || '4:3'));
+        });
+
+        // Border style
+        const borderSel = document.getElementById('nodeBorderStyle');
+        if (borderSel) borderSel.value = node.borderStyle || 'solid';
 
         if (x !== undefined && y !== undefined) {
             let left = x; let top = y;
             if (left + 320 > window.innerWidth) left = window.innerWidth - 340;
-            if (top + 400 > window.innerHeight) top = window.innerHeight - 420;
+            if (top + 550 > window.innerHeight) top = window.innerHeight - 570;
             if (left < 20) left = 20; if (top < 20) top = 20;
 
             m.style.left = left + 'px';

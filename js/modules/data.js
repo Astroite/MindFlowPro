@@ -56,7 +56,8 @@ export class DataModule {
         if (!this.app.state.currentId) return;
         const snap = JSON.stringify({
             nodes: this.app.state.nodes.map(n => ({
-                id: n.id, type: n.type, x: n.x || 0, y: n.y || 0, label: n.label, resId: n.resId, color: n.color, note: n.note
+                id: n.id, type: n.type, x: n.x || 0, y: n.y || 0, label: n.label, resId: n.resId, color: n.color, note: n.note,
+                shape: n.shape, texture: n.texture, layout: n.layout, borderStyle: n.borderStyle, cardRatio: n.cardRatio
             })),
             links: this.app.state.links.map(l => ({
                 source: typeof l.source === 'object' ? l.source.id : l.source,
@@ -84,7 +85,8 @@ export class DataModule {
         if (this.app.state.undoStack.length === 0) return this.app.eventBus.emit('toast', { msg: '没有可撤销的操作' });
         // Save current as redo
         const current = JSON.stringify({
-            nodes: this.app.state.nodes.map(n => ({ id: n.id, type: n.type, x: n.x || 0, y: n.y || 0, label: n.label, resId: n.resId, color: n.color, note: n.note })),
+            nodes: this.app.state.nodes.map(n => ({ id: n.id, type: n.type, x: n.x || 0, y: n.y || 0, label: n.label, resId: n.resId, color: n.color, note: n.note,
+                shape: n.shape, texture: n.texture, layout: n.layout, borderStyle: n.borderStyle, cardRatio: n.cardRatio })),
             links: this.app.state.links.map(l => ({ source: typeof l.source === 'object' ? l.source.id : l.source, target: typeof l.target === 'object' ? l.target.id : l.target, type: l.type }))
         });
         this.app.state.redoStack.push(current);
@@ -96,7 +98,8 @@ export class DataModule {
     redo() {
         if (this.app.state.redoStack.length === 0) return this.app.eventBus.emit('toast', { msg: '没有可重做的操作' });
         const current = JSON.stringify({
-            nodes: this.app.state.nodes.map(n => ({ id: n.id, type: n.type, x: n.x || 0, y: n.y || 0, label: n.label, resId: n.resId, color: n.color, note: n.note })),
+            nodes: this.app.state.nodes.map(n => ({ id: n.id, type: n.type, x: n.x || 0, y: n.y || 0, label: n.label, resId: n.resId, color: n.color, note: n.note,
+                shape: n.shape, texture: n.texture, layout: n.layout, borderStyle: n.borderStyle, cardRatio: n.cardRatio })),
             links: this.app.state.links.map(l => ({ source: typeof l.source === 'object' ? l.source.id : l.source, target: typeof l.target === 'object' ? l.target.id : l.target, type: l.type }))
         });
         this.app.state.undoStack.push(current);
@@ -184,6 +187,29 @@ export class DataModule {
         if (!res) return;
 
         this._snapshot();
+        this._deleteResourceInternal(id);
+
+        const msg = '资源已删除';
+        this._notifyResourceUpdate(msg);
+    }
+
+    // [Bug fix] Delete multiple resources with a single snapshot
+    batchDeleteResources(ids) {
+        if (!ids || ids.length === 0) return;
+        this._snapshot();
+        let totalDeleted = 0;
+        ids.forEach(id => {
+            const count = this._deleteResourceInternal(id);
+            totalDeleted += count;
+        });
+        const msg = totalDeleted > 1 ? `已删除 ${totalDeleted} 项资源` : '资源已删除';
+        this._notifyResourceUpdate(msg);
+    }
+
+    // Internal: delete a single resource and its children (no snapshot)
+    _deleteResourceInternal(id) {
+        const res = this.app.state.resources.find(r => r.id === id);
+        if (!res) return 0;
 
         const collectIds = (folderId) => {
             const ids = [folderId];
@@ -203,8 +229,7 @@ export class DataModule {
         });
         this.app.state.resources = this.app.state.resources.filter(r => !idsToDelete.includes(r.id));
 
-        const msg = idsToDelete.length > 1 ? `已删除文件夹及 ${idsToDelete.length - 1} 个内容` : '资源已删除';
-        this._notifyResourceUpdate(msg);
+        return idsToDelete.length;
     }
 
     // --- 节点操作 ---
@@ -217,6 +242,11 @@ export class DataModule {
             if (data.resId !== undefined) node.resId = data.resId;
             if (data.color !== undefined) node.color = data.color;
             if (data.note !== undefined) node.note = data.note;
+            if (data.shape !== undefined) node.shape = data.shape;
+            if (data.layout !== undefined) node.layout = data.layout;
+            if (data.texture !== undefined) node.texture = data.texture;
+            if (data.borderStyle !== undefined) node.borderStyle = data.borderStyle;
+            if (data.cardRatio !== undefined) node.cardRatio = data.cardRatio;
 
             this.app.graph.needsRender = true;
             this.app.storage.triggerSave();
@@ -320,14 +350,10 @@ export class DataModule {
 
         // Store node data (excluding position, which will be offset on paste)
         this._clipboard = nodesToCopy.map(n => ({
-            id: n.id,
-            type: n.type,
-            label: n.label,
-            resId: n.resId,
-            color: n.color,
-            note: n.note,
-            x: n.x,
-            y: n.y
+            id: n.id, type: n.type, label: n.label, resId: n.resId,
+            color: n.color, note: n.note, x: n.x, y: n.y,
+            shape: n.shape, texture: n.texture, layout: n.layout,
+            borderStyle: n.borderStyle, cardRatio: n.cardRatio
         }));
 
         // Also store links between copied nodes
@@ -361,15 +387,11 @@ export class DataModule {
             const newId = 'n_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
             idMap[n.id] = newId;
             return {
-                id: newId,
-                type: n.type,
-                label: n.label || '未命名',
-                resId: n.resId,
-                color: n.color,
-                note: n.note,
-                x: (n.x || 0) + offsetX,
-                y: (n.y || 0) + offsetY,
-                scale: 0.1
+                id: newId, type: n.type, label: n.label || '未命名',
+                resId: n.resId, color: n.color, note: n.note,
+                x: (n.x || 0) + offsetX, y: (n.y || 0) + offsetY, scale: 0.1,
+                shape: n.shape, texture: n.texture, layout: n.layout,
+                borderStyle: n.borderStyle, cardRatio: n.cardRatio
             };
         });
 

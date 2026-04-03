@@ -67,15 +67,48 @@ Modules communicate via `app.eventBus`. Key events: `resources:updated`, `nodes:
 
 ## Data Model
 
-- **Project**: `{id, name, created, nodes[], links[], resources[]}` stored in IndexedDB
-- **Node**: `{id, type: 'root'|'sub', x, y, label, resId, color, note}`
-- **Link**: `{source, target, type: 'structure'|'cross'}` — 'structure' = parent-child, 'cross' = manual fly-line
-- **Resource**: `{id, type: 'image'|'md'|'code'|'color'|'audio'|'link'|'folder', name, content, parentId, tags[]}`
+- **Project**: `{id, name, created, updated, nodes[], links[], resources[], camera: {x, y, k}}` stored in IndexedDB. Also exportable as `.mindflow.json` files.
+- **Node**: `{id, type: 'root'|'sub', x, y, label, resId, color, note, shape: 'circle'|'rounded-rect'|'pill', glass: bool, layout: 'icon'|'card', borderStyle: 'solid'|'glow'|'double'|'gradient', scale}`
+- **Link**: `{source, target, type: 'structure'|'cross'}` — 'structure' = parent-child, 'cross' = manual fly-line (zero physical force)
+- **Resource**: `{id, type: 'image'|'md'|'code'|'color'|'audio'|'link'|'folder'|'unknown', name, content, parentId, tags[], created, updated}`
 
-## Service Worker
+## EventBus Events
 
-`sw.js` uses cache-first strategy. **Bump `CACHE_NAME` version** whenever any source file changes, or users will see stale code.
+Key events emitted via `app.eventBus`:
+
+| Event | Emitted By | Consumed By | Purpose |
+|-------|-----------|-------------|---------|
+| `resources:updated` | DataModule | UIModule | Re-render resource tree |
+| `nodes:deleted` | DataModule | GraphModule | Update simulation + selection |
+| `toast` | Any | UIModule | Show toast notification |
+| `data:changed` | DataModule | StorageModule | Trigger debounced auto-save |
+
+## Canvas Rendering Architecture
+
+The graph renders on a single HTML5 Canvas element (`#mainCanvas`) via `requestAnimationFrame`. The `renderLoop()` in GraphModule checks a `needsRender` flag each frame — this decouples rendering from D3's simulation tick. D3's force simulation runs independently; each tick only sets `needsRender = true`.
+
+- **Camera**: Pan/zoom state `{x, y, k}` is stored in `app.state.camera` and applied via `ctx.setTransform()` before rendering.
+- **Image Cache**: GraphModule maintains a `Map`-based `imageCache` for resource thumbnails — clear it when project data changes via `imageCache.clear()`.
+- **Hit Detection**: Canvas has no DOM nodes, so node detection uses manual distance/shape math in `findNodeAtPosition()`.
+
+## PWA / Offline Support
+
+The app is installable as a PWA (`manifest.json`). The Service Worker (`sw.js`) uses a **cache-first** strategy for all assets.
+
+**Critical**: When modifying any source file, bump the `CACHE_NAME` version in `sw.js` (e.g., `'mindflow-v3.9'` → `'mindflow-v4.0'`). Otherwise users will continue serving stale cached files.
 
 ## TypeScript Support
 
-The project uses JSDoc + `tsconfig.json` for editor type checking (no compilation). `allowJs: true`, `checkJs: true`, `strict: false`. Library types are declared in `globals.d.ts`.
+The project uses JSDoc + `tsconfig.json` for editor type checking (no compilation). `allowJs: true`, `checkJs: true`, `strict: false`. Library types are declared in `globals.d.ts`. The `js/lib/` directory is excluded from type checking.
+
+## Testing
+
+There is no automated test suite. Test manually in Chrome/Edge by opening `http://localhost:8000`.
+
+## Key Development Gotchas
+
+1. **Service Worker cache**: Bump `CACHE_NAME` in `sw.js` on every code change.
+2. **Module init order**: `ui.init()` → `storage.init()` → `graph.init()` — this order matters.
+3. **Data serialization**: When saving to IndexedDB, nodes/links are cleaned to plain objects (no D3 internals like `vx`/`vy`/`index`). Don't add D3 internal fields to persisted data.
+4. **Canvas hit detection**: Any new node shapes require updating the hit detection math in GraphModule.
+5. **File System Access API**: Only available in Chrome/Edge. Firefox falls back to download mode.

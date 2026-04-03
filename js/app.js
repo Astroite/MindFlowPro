@@ -1,6 +1,5 @@
 /**
  * MindFlow - App Logic (Fully Modularized Phase 3)
- * 版本: 3.4.1
  * 架构：ES Modules + Event Bus + Separation of Concerns
  */
 
