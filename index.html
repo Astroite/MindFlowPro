@@ -32,6 +32,12 @@
                     <label>
                         <input type="text" class="search-input" placeholder="搜索资源..." oninput="app.ui.filterResources(this.value)">
                     </label>
+                    <select class="sort-select" onchange="app.ui.setSortMode(this.value)" title="排序方式">
+                        <option value="created">创建时间</option>
+                        <option value="updated">更新时间</option>
+                        <option value="name">名称</option>
+                        <option value="type">类型</option>
+                    </select>
                 </div>
                 <div class="btn-group-mini">
                     <button class="btn-icon" title="导出到本地磁盘" onclick="app.storage.triggerSaveDisk()">💾</button>
@@ -49,31 +55,50 @@
             </div>
         </div>
 
-        <div class="sidebar-footer">
+        <div class="sidebar-footer" id="sidebarFooter">
             <button class="btn-secondary" style="flex:1;" onclick="app.ui.handleCreateFolder()" title="新建文件夹">📁</button>
             <button class="btn-primary" style="flex:3;" onclick="app.ui.openResModal()">+ 添加资源</button>
+            <button class="btn-secondary" style="flex:1;" onclick="app.ui.toggleBatchMode()" title="批量管理">☑️</button>
+        </div>
+        <div class="batch-bar" id="batchBar" style="display:none;">
+            <span id="batchCount">已选 0 项</span>
+            <select id="batchFolderSelect" class="batch-folder-select"><option value="">移到...</option></select>
+            <button class="btn-secondary batch-action-btn" onclick="app.ui.batchMoveToFolder()">📂 移动</button>
+            <button class="btn-danger batch-action-btn" onclick="app.ui.batchDelete()">🗑️ 删除</button>
+            <button class="btn-secondary batch-action-btn" onclick="app.ui.toggleBatchMode()">取消</button>
         </div>
     </div>
 
     <div class="main-area">
         <div class="toolbar">
-            <button class="tool-btn" onclick="app.ui.toggleSidebar()" title="菜单">☰</button>
-            <div class="divider"></div>
-            <button class="tool-btn primary" onclick="app.graph.addRootNode()" title="添加根节点"><span>🎯 根节点</span></button>
-            <button class="tool-btn" onclick="app.graph.resetCamera()" title="视图归位"><span>🔎 归位</span></button>
-            <button class="tool-btn" onclick="app.graph.fitToScreen()" title="适配所有节点 (F)"><span>⊡ 适配</span></button>
-            <button class="tool-btn" id="btnToggleLinks" onclick="app.ui.toggleCrossLinks()" title="显示/隐藏飞线 (Alt+L)"><span>👁️ 飞线</span></button>
-            <div class="divider"></div>
-            <input type="text" id="projTitleInput" class="project-title-input" placeholder="未命名项目" onchange="app.data.renameProject(this.value)" title="点击重命名项目">
-            <div class="divider"></div>
-            <button class="tool-btn" onclick="app.storage.forceSave()" title="保存到浏览器数据库"><span>☁️ 保存</span></button>
-            <button class="tool-btn" onclick="app.ui.exportImage()" title="导出为图片"><span>📷 导出</span></button>
-            <button class="tool-btn" onclick="app.graph.exportSVG()" title="导出为 SVG"><span>📐 SVG</span></button>
-            <button class="tool-btn danger" onclick="app.graph.clearAll()" title="清空画布"><span>🗑️ 清空</span></button>
-            <div class="divider"></div>
-            <button class="tool-btn" onclick="app.ui.toggleTheme()" title="切换深色/浅色模式"><span>🌗</span></button>
-            <a href="https://astroite.com/article/8cd061ed/" target="_blank" class="tool-btn" style="text-decoration: none; color: var(--primary);" title="说明书"><span>❓</span></a>
-            <button class="tool-btn" onclick="document.getElementById('shortcutsModal').style.display='flex'" title="键盘快捷键 (?)"><span>⌨️</span></button>
+            <div class="toolbar-left">
+                <button class="tool-btn" onclick="app.ui.toggleSidebar()" title="菜单">☰</button>
+                <button class="tool-btn primary" onclick="app.graph.addRootNode()" title="添加根节点"><span>+ 根节点</span></button>
+            </div>
+            <div class="toolbar-center">
+                <input type="text" id="projTitleInput" class="project-title-input" placeholder="未命名项目" onchange="app.data.renameProject(this.value)" title="点击重命名项目">
+            </div>
+            <div class="toolbar-right">
+                <button class="tool-btn" onclick="app.graph.resetCamera()" title="视图归位 (双击画布)">🔎</button>
+                <div class="export-dropdown">
+                    <button class="tool-btn" onclick="app.ui.toggleExportMenu()" title="导出">📤 <span class="dropdown-arrow">▾</span></button>
+                    <div class="export-menu" id="exportMenu">
+                        <button onclick="app.ui.exportImage(); app.ui.closeExportMenu()">📷 导出 PNG</button>
+                        <button onclick="app.graph.exportSVG(); app.ui.closeExportMenu()">📐 导出 SVG</button>
+                    </div>
+                </div>
+                <button class="tool-btn" id="btnToggleMinimap" onclick="app.ui.toggleMinimap()" title="小地图">🗺️</button>
+                <button class="tool-btn" onclick="app.ui.toggleTheme()" title="切换主题">🌗</button>
+                <button class="tool-btn" onclick="app.ui.toggleNodeSearch()" title="搜索节点">🔍</button>
+                <button class="tool-btn" onclick="document.getElementById('shortcutsModal').style.display='flex'" title="快捷键">⌨️</button>
+            </div>
+            <div class="node-search-bar" id="nodeSearchBar" style="display:none;">
+                <input type="text" id="nodeSearchInput" class="node-search-input" placeholder="搜索节点..." oninput="app.ui.searchNodes(this.value)">
+                <span id="nodeSearchCount" class="node-search-count"></span>
+                <button class="node-search-btn" onclick="app.ui.nodeSearchPrev()" title="上一个">▲</button>
+                <button class="node-search-btn" onclick="app.ui.nodeSearchNext()" title="下一个">▼</button>
+                <button class="node-search-btn" onclick="app.ui.toggleNodeSearch()" title="关闭">✕</button>
+            </div>
         </div>
 
         <div id="saveStatus" class="status-text">就绪</div>
@@ -95,33 +120,6 @@
     <button class="bubble-btn action-delete" onclick="app.ui.onBubbleDelete()" title="删除节点">
         <span style="font-size: 16px;">🗑️</span>
     </button>
-</div>
-
-<!-- 键盘快捷键说明弹窗 -->
-<div class="modal-overlay" id="shortcutsModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
-    <div class="modal-box" style="width:460px;max-height:80vh;overflow-y:auto;">
-        <h3 style="margin-bottom:18px;">⌨️ 键盘快捷键</h3>
-        <table class="shortcuts-table">
-            <thead><tr><th>操作</th><th>快捷键</th></tr></thead>
-            <tbody>
-                <tr><td>撤销</td><td><kbd>Ctrl</kbd>+<kbd>Z</kbd></td></tr>
-                <tr><td>重做</td><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd></td></tr>
-                <tr><td>全选节点</td><td><kbd>Ctrl</kbd>+<kbd>A</kbd></td></tr>
-                <tr><td>删除选中节点/飞线</td><td><kbd>Delete</kbd> / <kbd>Backspace</kbd></td></tr>
-                <tr><td>多选节点（点选）</td><td><kbd>Ctrl</kbd>+单击</td></tr>
-                <tr><td>框选节点</td><td><kbd>Shift</kbd>+拖动空白区域</td></tr>
-                <tr><td>移动多个节点</td><td>拖动任意已选节点</td></tr>
-                <tr><td>双击编辑标签</td><td>双击节点</td></tr>
-                <tr><td>确认编辑</td><td><kbd>Enter</kbd></td></tr>
-                <tr><td>取消编辑</td><td><kbd>Escape</kbd></td></tr>
-                <tr><td>适配所有节点</td><td><kbd>F</kbd></td></tr>
-                <tr><td>取消连线模式</td><td><kbd>Escape</kbd></td></tr>
-                <tr><td>显示/隐藏飞线</td><td><kbd>Alt</kbd>+<kbd>L</kbd></td></tr>
-                <tr><td>显示/隐藏快捷键</td><td><kbd>?</kbd></td></tr>
-            </tbody>
-        </table>
-        <button class="btn-primary" style="margin-top:20px;width:100%;" onclick="document.getElementById('shortcutsModal').style.display='none'">关闭</button>
-    </div>
 </div>
 
 <!-- [新增] 通用单行输入弹窗 -->
@@ -212,14 +210,14 @@
 
 <div class="node-menu modern-panel" id="nodeMenu" style="display: none;">
     <div class="panel-header">
-        <h3>✨ 编辑节点</h3>
+        <h3>编辑节点</h3>
         <button class="close-btn" onclick="document.getElementById('nodeMenu').style.display='none'">×</button>
     </div>
 
     <div class="panel-body">
         <div class="form-group">
-            <label class="panel-label">节点名称</label>
-            <label for="nodeLabel"></label><input type="text" id="nodeLabel" class="form-input panel-input" placeholder="输入节点标题...">
+            <label class="panel-label">名称</label>
+            <label for="nodeLabel"></label><input type="text" id="nodeLabel" class="form-input panel-input" placeholder="节点标题...">
         </div>
 
         <div class="form-group">
@@ -228,32 +226,105 @@
                 <label for="nodeResSelect"></label><select id="nodeResSelect" class="form-input panel-select"></select>
                 <span class="select-arrow">▼</span>
             </div>
-            <small class="panel-hint">关联后，悬浮节点即可预览内容</small>
         </div>
 
-        <div class="form-group">
-            <label class="panel-label">节点颜色</label>
-            <div style="display:flex;align-items:center;gap:10px;">
-                <input type="color" id="nodeColor" style="width:44px;height:36px;border:1px solid var(--border-color);border-radius:6px;padding:2px;cursor:pointer;background:none;">
-                <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
-                    <input type="checkbox" id="nodeUseColor" style="width:14px;height:14px;">
-                    使用自定义颜色
-                </label>
+        <div class="form-group form-row">
+            <label class="panel-label">颜色</label>
+            <div style="display:flex;gap:8px;align-items:center;">
+                <input type="color" id="nodeColor" style="width:36px;height:30px;border:1px solid var(--border-color);border-radius:6px;padding:2px;cursor:pointer;background:none;">
+                <button type="button" id="nodeColorReset" class="btn-sm" title="重置为默认颜色">重置</button>
+            </div>
+        </div>
+
+        <div class="form-group form-row">
+            <label class="panel-label">质感</label>
+            <div class="texture-options" style="display:flex;gap:6px;flex:1;">
+                <button type="button" class="texture-btn" data-texture="glass">玻璃</button>
+                <button type="button" class="texture-btn" data-texture="acrylic">亚克力</button>
+                <button type="button" class="texture-btn" data-texture="metallic">金属</button>
+            </div>
+        </div>
+
+        <div class="form-group form-row">
+            <label class="panel-label">布局</label>
+            <div class="layout-options" style="display:flex;gap:6px;flex:1;">
+                <button type="button" class="layout-btn" data-layout="icon">图标</button>
+                <button type="button" class="layout-btn" data-layout="card">卡片</button>
+            </div>
+        </div>
+
+        <div class="form-group form-row" id="shapeRatioRow">
+            <label class="panel-label" id="shapeRatioLabel">形状</label>
+            <div id="shapeOptions" class="shape-options" style="display:flex;gap:6px;flex:1;">
+                <button type="button" class="shape-btn" data-shape="circle" title="圆形">●</button>
+                <button type="button" class="shape-btn" data-shape="rounded-rect" title="圆角方形">▢</button>
+            </div>
+            <div id="ratioOptions" class="ratio-options" style="display:none;gap:6px;flex:1;">
+                <button type="button" class="ratio-btn" data-ratio="1:1">1:1</button>
+                <button type="button" class="ratio-btn" data-ratio="3:4">3:4</button>
+                <button type="button" class="ratio-btn" data-ratio="4:3">4:3</button>
+                <button type="button" class="ratio-btn" data-ratio="16:9">16:9</button>
+            </div>
+        </div>
+
+        <div class="form-group form-row">
+            <label class="panel-label">边框</label>
+            <div class="select-wrapper" style="flex:1;">
+                <select id="nodeBorderStyle" class="form-input panel-select" style="font-size:12px;">
+                    <option value="solid">实线</option>
+                    <option value="glow">发光</option>
+                    <option value="double">双线</option>
+                    <option value="gradient">渐变</option>
+                </select>
+                <span class="select-arrow">▼</span>
             </div>
         </div>
 
         <div class="form-group">
-            <label class="panel-label">节点备注</label>
-            <textarea id="nodeNote" class="form-input panel-input" rows="3" placeholder="添加备注..."></textarea>
+            <label class="panel-label">备注</label>
+            <textarea id="nodeNote" class="form-input panel-input" rows="2" placeholder="备注..."></textarea>
         </div>
     </div>
 
     <div class="panel-footer">
-        <button class="btn-primary full-width" onclick="app.ui.handleSaveNodeEdit()">保存修改</button>
+        <button class="btn-primary full-width" onclick="app.ui.handleSaveNodeEdit()">保存</button>
     </div>
 </div>
 
-<div class="toast" id="toast"></div>
+<div id="toastContainer" class="toast-container"></div>
+
+<!-- [P1-3] Inline edit input for node labels -->
+<input type="text" id="inlineEditInput" class="inline-edit-input" style="display:none;">
+
+<!-- [P2-3] Keyboard shortcuts help modal -->
+<div class="modal-overlay" id="shortcutsModal" style="display:none;">
+    <div class="modern-modal" style="max-width:480px;">
+        <div class="panel-header">
+            <h3>⌨️ 快捷键</h3>
+            <button class="close-btn" onclick="app.ui.closeModal('shortcutsModal')">×</button>
+        </div>
+        <div class="panel-body" style="max-height:60vh;overflow-y:auto;">
+            <table class="shortcuts-table">
+                <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd></td><td>撤销</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>Y</kbd></td><td>重做</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>N</kbd></td><td>新建根节点</td></tr>
+                <tr><td><kbd>Tab</kbd></td><td>为选中节点添加子节点</td></tr>
+                <tr><td><kbd>F2</kbd></td><td>编辑节点标签</td></tr>
+                <tr><td><kbd>Delete</kbd></td><td>删除选中节点/连线</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>C</kbd></td><td>复制节点</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>V</kbd></td><td>粘贴节点</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>D</kbd></td><td>复制选中节点</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>保存</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>E</kbd></td><td>导出图片</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>F</kbd></td><td>搜索资源</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>G</kbd></td><td>搜索节点 (下一个)</td></tr>
+                <tr><td><kbd>Alt</kbd>+<kbd>L</kbd></td><td>切换飞线显示</td></tr>
+                <tr><td><kbd>Shift</kbd>+拖拽</td><td>平移画布</td></tr>
+                <tr><td><kbd>?</kbd></td><td>显示此帮助</td></tr>
+            </table>
+        </div>
+    </div>
+</div>
 
 <!-- [Feature 3] Full-screen resource viewer modal -->
 <div class="modal-overlay" id="viewerModal" style="display:none;">

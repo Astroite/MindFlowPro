@@ -15,6 +15,7 @@ export class UIModule {
         this.initTooltip();
         this.bindGlobalEvents();
         this.setupInputModal();
+        this.setupShapeLayoutButtons();
 
         this.app.eventBus.on('resources:updated', () => this.renderResourceTree());
         this.app.eventBus.on('nodes:deleted', () => {
@@ -23,7 +24,7 @@ export class UIModule {
             this.app.state.editingNode = null;
             this.hideNodeBubble();
         });
-        this.app.eventBus.on('toast', (data) => this.toast(data.msg));
+        this.app.eventBus.on('toast', (data) => this.toast(data.msg, data.type));
     }
 
     initTooltip() {
@@ -31,13 +32,29 @@ export class UIModule {
         this.tooltipEl.id = 'mindflow-tooltip';
         Object.assign(this.tooltipEl.style, {
             position: 'fixed', display: 'none', zIndex: '1000',
-            background: 'white', border: '1px solid #ccc', borderRadius: '6px',
+            borderRadius: '6px',
             padding: '10px', boxShadow: '0 4px 15px rgba(0,0,0,0.1)',
             maxWidth: '300px', maxHeight: '300px', overflow: 'hidden', pointerEvents: 'auto'
         });
         document.body.appendChild(this.tooltipEl);
         this.tooltipEl.addEventListener('mouseenter', () => clearTimeout(this.app.state.tooltipTimer));
         this.tooltipEl.addEventListener('mouseleave', () => this.hideTooltip());
+        this._updateTooltipTheme();
+    }
+
+    // [P0-3] Update tooltip colors to match current theme
+    _updateTooltipTheme() {
+        if (!this.tooltipEl) return;
+        const isDark = document.body.getAttribute('data-theme') === 'dark';
+        if (isDark) {
+            this.tooltipEl.style.background = '#27272a';
+            this.tooltipEl.style.border = '1px solid #3f3f46';
+            this.tooltipEl.style.color = '#f3f4f6';
+        } else {
+            this.tooltipEl.style.background = '#ffffff';
+            this.tooltipEl.style.border = '1px solid #e2e8f0';
+            this.tooltipEl.style.color = '#1f2937';
+        }
     }
 
     setupInputModal() {
@@ -78,6 +95,56 @@ export class UIModule {
         input.addEventListener('keyup', (e) => {
             if (e.key === 'Enter') confirmHandler();
             if (e.key === 'Escape') cancelHandler();
+        });
+    }
+
+    setupShapeLayoutButtons() {
+        this._colorChanged = false;
+        this._colorReset = false;
+
+        // Shape buttons
+        document.querySelectorAll('.shape-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.shape-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            });
+        });
+        // Layout buttons — also toggle shape/ratio row
+        document.querySelectorAll('.layout-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.layout-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                const isCard = btn.dataset.layout === 'card';
+                document.getElementById('shapeOptions').style.display = isCard ? 'none' : 'flex';
+                document.getElementById('ratioOptions').style.display = isCard ? 'flex' : 'none';
+                document.getElementById('shapeRatioLabel').textContent = isCard ? '比例' : '形状';
+            });
+        });
+        // Texture buttons — mutually exclusive toggle (click active to deselect)
+        document.querySelectorAll('.texture-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const wasActive = btn.classList.contains('active');
+                document.querySelectorAll('.texture-btn').forEach(b => b.classList.remove('active'));
+                if (!wasActive) btn.classList.add('active');
+            });
+        });
+        // Ratio buttons
+        document.querySelectorAll('.ratio-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.ratio-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            });
+        });
+        // Color auto-enable on change
+        document.getElementById('nodeColor').addEventListener('input', () => {
+            this._colorChanged = true;
+            this._colorReset = false;
+        });
+        // Color reset button
+        document.getElementById('nodeColorReset').addEventListener('click', () => {
+            this._colorReset = true;
+            this._colorChanged = false;
+            document.getElementById('nodeColor').value = '#6366f1';
         });
     }
 
@@ -169,6 +236,80 @@ export class UIModule {
             if ((e.ctrlKey||e.metaKey) && ((e.shiftKey && e.key.toLowerCase()==='z') || e.key.toLowerCase()==='y')) {
                 e.preventDefault(); this.app.data.redo();
             }
+            // [P0-2] Ctrl+N — new root node
+            if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase() === 'n') {
+                e.preventDefault(); this.app.graph.addRootNode();
+            }
+            // [P0-2] Ctrl+F — focus sidebar search
+            if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase() === 'f') {
+                e.preventDefault();
+                const searchInput = document.querySelector('.search-input');
+                if (searchInput) { searchInput.focus(); searchInput.select(); }
+            }
+            // [P0-2] Ctrl+S — force save
+            if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase() === 's') {
+                e.preventDefault(); this.app.storage.forceSave(); this.toast('已保存');
+            }
+            // [P0-2] Ctrl+E — export image
+            if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase() === 'e') {
+                e.preventDefault(); this.exportImage();
+            }
+            // [P0-2] Tab — add child node for selected node
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                if (this.app.state.selectedNodes.size === 1) {
+                    const nodeId = [...this.app.state.selectedNodes][0];
+                    const node = this.app.state.nodes.find(n => n.id === nodeId);
+                    if (node) this.app.graph.addChildNode(node);
+                }
+            }
+            // [P1-3] F2 — inline edit node label
+            if (e.key === 'F2') {
+                e.preventDefault();
+                if (this.app.state.selectedNodes.size === 1) {
+                    const nodeId = [...this.app.state.selectedNodes][0];
+                    const node = this.app.state.nodes.find(n => n.id === nodeId);
+                    if (node) this.app.graph.inlineEdit(node);
+                }
+            }
+            // [P0-5] Ctrl+C — copy selected nodes
+            if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase() === 'c') {
+                if (this.app.state.selectedNodes.size > 0) {
+                    e.preventDefault(); this.app.data.copySelectedNodes();
+                }
+            }
+            // [P0-5] Ctrl+V — paste nodes
+            if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase() === 'v') {
+                e.preventDefault(); this.app.data.pasteNodes(30, 30);
+            }
+            // [P0-5] Ctrl+D — duplicate selected nodes
+            if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase() === 'd') {
+                if (this.app.state.selectedNodes.size > 0) {
+                    e.preventDefault(); this.app.data.duplicateSelectedNodes();
+                }
+            }
+            // [P2-3] ? — show shortcuts help
+            if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                e.preventDefault();
+                document.getElementById('shortcutsModal').style.display = 'flex';
+            }
+            // [P2-2] Ctrl+G — jump to next node search match
+            if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase() === 'g') {
+                e.preventDefault();
+                const bar = document.getElementById('nodeSearchBar');
+                if (bar.style.display !== 'none') {
+                    this.nodeSearchNext();
+                } else {
+                    this.toggleNodeSearch();
+                }
+            }
+            // [P2-2] Escape — close node search bar
+            if (e.key === 'Escape') {
+                const bar = document.getElementById('nodeSearchBar');
+                if (bar.style.display !== 'none') {
+                    this.toggleNodeSearch();
+                }
+            }
         });
     }
 
@@ -200,7 +341,7 @@ export class UIModule {
         const activeTag = this.app.state.activeTag || '';
         const rootItems = resources.filter(r => !r.parentId);
         const rootFolders = rootItems.filter(r => r.type === 'folder');
-        const rootFiles = rootItems.filter(r => r.type !== 'folder' && this._resMatchesFilter(r, keyword, activeTag));
+        const rootFiles = this._sortResources(rootItems.filter(r => r.type !== 'folder' && this._resMatchesFilter(r, keyword, activeTag)));
         let html = '';
         rootFolders.forEach(f => { html += this._renderFolderHtml(f, resources, keyword, activeTag, 0); });
         rootFiles.forEach(f => { html += this.createResItemHtml(f, keyword); });
@@ -231,19 +372,23 @@ export class UIModule {
         if (!this._folderHasMatch(folder, allResources, keyword, activeTag)) return '';
         const children = allResources.filter(r => r.parentId === folder.id);
         const childFolders = children.filter(r => r.type === 'folder');
-        const childFiles = children.filter(r => r.type !== 'folder' && this._resMatchesFilter(r, keyword, activeTag));
+        const childFiles = this._sortResources(children.filter(r => r.type !== 'folder' && this._resMatchesFilter(r, keyword, activeTag)));
         const isOpen = keyword || activeTag ? true : this.app.state.expandedFolders.has(folder.id);
         const pl = 10 + depth * 16;
         let childHtml = '';
         childFolders.forEach(f => { childHtml += this._renderFolderHtml(f, allResources, keyword, activeTag, depth + 1); });
         childFiles.forEach(f => { childHtml += this.createResItemHtml(f, keyword); });
+        const batchMode = this.app.state._batchMode;
+        const batchChecked = this.app.state._batchSelected && this.app.state._batchSelected.has(folder.id);
+        const batchCb = batchMode ? `<input type="checkbox" class="batch-checkbox" id="batch-cb-${folder.id}" ${batchChecked?'checked':''} onclick="event.stopPropagation();app.ui.toggleBatchSelect('${folder.id}')">` : '';
         return `
-            <div class="res-folder ${isOpen?'open':''}" style="padding-left:${pl}px"
+            <div class="res-folder ${isOpen?'open':''} ${batchChecked?'batch-selected':''}" style="padding-left:${pl}px"
                  onclick="app.ui.toggleFolder('${folder.id}')"
                  oncontextmenu="event.preventDefault();app.ui.handleRenameFolder('${folder.id}')"
                  ondragover="app.ui.dragOver(event,'${folder.id}')"
                  ondrop="app.ui.drop(event,'${folder.id}')"
                  ondragleave="app.ui.dragLeave(event)" title="右键点击可快速重命名">
+                ${batchCb}
                 <div class="folder-icon">▶</div>
                 <div class="res-info"><div class="res-name">${this.highlightText(folder.name, keyword)}</div></div>
                 <div class="res-actions">
@@ -264,12 +409,17 @@ export class UIModule {
         // [Feature 8] Tags
         const tagsHtml = r.tags && r.tags.length ? `<div class="res-tags">${r.tags.map(t=>`<span class="res-tag">${this.app.utils.escapeHtml(t)}</span>`).join('')}</div>` : '';
 
+        const batchMode = this.app.state._batchMode;
+        const batchChecked = this.app.state._batchSelected && this.app.state._batchSelected.has(r.id);
+        const batchCb = batchMode ? `<input type="checkbox" class="batch-checkbox" id="batch-cb-${r.id}" ${batchChecked?'checked':''} onclick="event.stopPropagation();app.ui.toggleBatchSelect('${r.id}')">` : '';
+
         return `
-            <div class="res-item"
+            <div class="res-item ${batchChecked?'batch-selected':''}"
                  draggable="true"
                  ondragstart="app.ui.dragStart(event, '${r.id}')"
                  onmouseenter="app.ui.showSidebarPreview('${r.id}', event)"
                  onmouseleave="app.ui.hideTooltip()">
+                ${batchCb}
                 <div class="res-icon" onclick="app.ui.viewResource('${r.id}')">${icon}</div>
                 <div class="res-info" onclick="app.ui.viewResource('${r.id}')">
                     <div class="res-name">${this.highlightText(r.name, keyword)}</div>
@@ -315,6 +465,22 @@ export class UIModule {
         this.renderResourceTree();
     }
 
+    // [P1-5] Resource sort
+    setSortMode(mode) {
+        this.app.state.resSortMode = mode;
+        this.renderResourceTree();
+    }
+
+    _sortResources(items) {
+        const mode = this.app.state.resSortMode || 'created';
+        return items.sort((a, b) => {
+            if (mode === 'name') return (a.name || '').localeCompare(b.name || '');
+            if (mode === 'type') return (a.type || '').localeCompare(b.type || '');
+            if (mode === 'updated') return (b.updated || 0) - (a.updated || 0);
+            return (b.created || 0) - (a.created || 0); // default: created desc
+        });
+    }
+
     // [Feature 6] handleCreateFolder accepts optional parentId
     handleCreateFolder(parentId = null) {
         if(!this.app.state.currentId) return this.toast('请先创建项目');
@@ -338,6 +504,70 @@ export class UIModule {
         const msg = res.type === 'folder' ? '确定删除此文件夹及其所有内容吗？此操作不可恢复。' : '确定删除此资源吗？';
         const confirmed = await this.confirmDialog(msg);
         if (confirmed) this.app.data.deleteResource(id);
+    }
+
+    // [P2-4] Batch mode
+    toggleBatchMode() {
+        const batchMode = !this.app.state._batchMode;
+        this.app.state._batchMode = batchMode;
+        this.app.state._batchSelected = new Set();
+        document.getElementById('batchBar').style.display = batchMode ? 'flex' : 'none';
+        document.getElementById('sidebarFooter').style.display = batchMode ? 'none' : 'flex';
+        if (batchMode) this._populateBatchFolderSelect();
+        this.renderResourceTree();
+    }
+
+    _populateBatchFolderSelect() {
+        const sel = document.getElementById('batchFolderSelect');
+        const folders = this.app.state.resources.filter(r => r.type === 'folder');
+        let html = '<option value="">移到...</option>';
+        html += '<option value="__root__">(根目录)</option>';
+        const buildOpts = (parentId, depth) => {
+            return folders.filter(f => f.parentId === parentId).map(f => {
+                const indent = '\u3000'.repeat(depth);
+                const childHtml = buildOpts(f.id, depth + 1);
+                return `<option value="${f.id}">${indent}📁 ${this.app.utils.escapeHtml(f.name)}</option>${childHtml}`;
+            }).join('');
+        };
+        html += buildOpts(null, 0);
+        sel.innerHTML = html;
+    }
+
+    toggleBatchSelect(id) {
+        if (this.app.state._batchSelected.has(id)) {
+            this.app.state._batchSelected.delete(id);
+        } else {
+            this.app.state._batchSelected.add(id);
+        }
+        document.getElementById('batchCount').textContent = `已选 ${this.app.state._batchSelected.size} 项`;
+        // Update visual
+        const checkbox = document.getElementById(`batch-cb-${id}`);
+        if (checkbox) checkbox.checked = this.app.state._batchSelected.has(id);
+        const item = checkbox ? checkbox.closest('.res-item, .res-folder') : null;
+        if (item) item.classList.toggle('batch-selected', this.app.state._batchSelected.has(id));
+    }
+
+    async batchDelete() {
+        const ids = [...this.app.state._batchSelected];
+        if (ids.length === 0) return this.toast('请先选择资源');
+        const confirmed = await this.confirmDialog(`确定删除选中的 ${ids.length} 项资源吗？`);
+        if (!confirmed) return;
+        this.app.data.batchDeleteResources(ids);
+        this.app.state._batchSelected.clear();
+        document.getElementById('batchCount').textContent = '已选 0 项';
+        this.toast(`已删除 ${ids.length} 项`);
+    }
+
+    batchMoveToFolder() {
+        const targetId = document.getElementById('batchFolderSelect').value;
+        if (!targetId) return this.toast('请选择目标文件夹');
+        const ids = [...this.app.state._batchSelected];
+        if (ids.length === 0) return this.toast('请先选择资源');
+        const parentId = targetId === '__root__' ? null : targetId;
+        ids.forEach(id => this.app.data.moveResource(id, parentId));
+        this.app.state._batchSelected.clear();
+        this.renderResourceTree();
+        this.toast(`已移动 ${ids.length} 项`);
     }
 
     handleEditResource(id) {
@@ -453,12 +683,21 @@ export class UIModule {
         if (node) {
             const label = document.getElementById('nodeLabel').value;
             const resId = document.getElementById('nodeResSelect').value || null;
-            // [Feature 4] Color
-            const useColor = document.getElementById('nodeUseColor').checked;
-            const color = useColor ? document.getElementById('nodeColor').value : null;
-            // [Feature 7] Note
+            // Color: auto-enable on change, reset clears
+            const color = this._colorReset ? null : (this._colorChanged ? document.getElementById('nodeColor').value : node.color);
+            // Note
             const note = document.getElementById('nodeNote') ? document.getElementById('nodeNote').value.trim() || null : null;
-            this.app.data.updateNode(node.id, { label, resId, color, note });
+            // Appearance
+            const activeShape = document.querySelector('.shape-btn.active');
+            const shape = activeShape ? activeShape.dataset.shape : (node.shape || 'circle');
+            const activeLayout = document.querySelector('.layout-btn.active');
+            const layout = activeLayout ? activeLayout.dataset.layout : (node.layout || 'icon');
+            const activeTexture = document.querySelector('.texture-btn.active');
+            const texture = activeTexture ? activeTexture.dataset.texture : null;
+            const borderStyle = document.getElementById('nodeBorderStyle') ? document.getElementById('nodeBorderStyle').value : 'solid';
+            const activeRatio = document.querySelector('.ratio-btn.active');
+            const cardRatio = activeRatio ? activeRatio.dataset.ratio : null;
+            this.app.data.updateNode(node.id, { label, resId, color, note, shape, layout, texture, borderStyle, cardRatio });
             document.getElementById('nodeMenu').style.display = 'none';
         }
     }
@@ -481,6 +720,8 @@ export class UIModule {
             body.setAttribute('data-theme', 'dark');
             localStorage.setItem('theme', 'dark');
         }
+        this._updateTooltipTheme();
+        this.app.graph.needsRender = true;
     }
 
     triggerImport() {
@@ -554,20 +795,48 @@ export class UIModule {
             `<option value="${r.id}" ${r.id===node.resId?'selected':''}>${r.name}</option>`
         ).join('');
 
-        // [Feature 4] Color
+        // Color
+        this._colorChanged = false;
+        this._colorReset = false;
         const colorInput = document.getElementById('nodeColor');
-        const useColorCb = document.getElementById('nodeUseColor');
         if (colorInput) colorInput.value = node.color || '#6366f1';
-        if (useColorCb) useColorCb.checked = !!node.color;
 
-        // [Feature 7] Note
+        // Note
         const noteEl = document.getElementById('nodeNote');
         if (noteEl) noteEl.value = node.note || '';
+
+        // Shape
+        document.querySelectorAll('.shape-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.shape === (node.shape || 'circle'));
+        });
+
+        // Texture
+        document.querySelectorAll('.texture-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.texture === (node.texture || ''));
+        });
+
+        // Layout
+        const isCard = (node.layout || 'icon') === 'card';
+        document.querySelectorAll('.layout-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.layout === (node.layout || 'icon'));
+        });
+        document.getElementById('shapeOptions').style.display = isCard ? 'none' : 'flex';
+        document.getElementById('ratioOptions').style.display = isCard ? 'flex' : 'none';
+        document.getElementById('shapeRatioLabel').textContent = isCard ? '比例' : '形状';
+
+        // Card ratio
+        document.querySelectorAll('.ratio-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.ratio === (node.cardRatio || '4:3'));
+        });
+
+        // Border style
+        const borderSel = document.getElementById('nodeBorderStyle');
+        if (borderSel) borderSel.value = node.borderStyle || 'solid';
 
         if (x !== undefined && y !== undefined) {
             let left = x; let top = y;
             if (left + 320 > window.innerWidth) left = window.innerWidth - 340;
-            if (top + 400 > window.innerHeight) top = window.innerHeight - 420;
+            if (top + 550 > window.innerHeight) top = window.innerHeight - 570;
             if (left < 20) left = 20; if (top < 20) top = 20;
 
             m.style.left = left + 'px';
@@ -679,6 +948,14 @@ export class UIModule {
         }
     }
 
+    // [P2-5] Toggle minimap
+    toggleMinimap() {
+        this.app.graph.showMinimap = !this.app.graph.showMinimap;
+        this.app.graph.needsRender = true;
+        const btn = document.getElementById('btnToggleMinimap');
+        if (btn) btn.classList.toggle('disabled', !this.app.graph.showMinimap);
+    }
+
     dragStart(e, id) {
         e.dataTransfer.setData('text/plain', id); e.dataTransfer.effectAllowed = 'move';
         this.app.state.draggedResId = id; e.target.classList.add('dragging');
@@ -713,17 +990,31 @@ export class UIModule {
         const res = this.app.state.resources.find(r => r.id === resId);
         if (!res) return;
 
+        this._updateTooltipTheme();
+        const isDark = document.body.getAttribute('data-theme') === 'dark';
+
         let content = '';
         if (res.type === 'image') content = `<img src="${res.content}" style="max-width:100%; max-height:200px; display:block; border-radius:4px;">`;
         else if (res.type === 'md') {
             let html = marked.parse(res.content);
             html = this.app.utils.purifyHTML(html);
-            content = `<div class="md-preview" style="background:#f8f9fa; padding:10px; border-radius:4px; max-height:280px; overflow-y:auto;">${html}</div>`;
+            const mdBg = isDark ? '#1e1e1e' : '#f8f9fa';
+            content = `<div class="md-preview" style="background:${mdBg}; padding:10px; border-radius:4px; max-height:280px; overflow-y:auto;">${html}</div>`;
         }
-        else if (res.type === 'code') content = `<pre style="font-family:monospace; background:#282c34; color:#abb2bf; padding:10px; border-radius:4px; font-size:12px; overflow:auto;">${this.app.utils.escapeHtml(res.content)}</pre>`;
-        else if (res.type === 'color') content = `<div style="width:100px; height:60px; background-color:${res.content}; border-radius:4px; border:1px solid #ddd; margin-bottom:5px;"></div><div style="text-align:center; font-family:monospace; font-weight:bold;">${res.content}</div>`;
+        else if (res.type === 'code') {
+            const codeBg = isDark ? '#1e1e1e' : '#282c34';
+            const codeColor = isDark ? '#d4d4d4' : '#abb2bf';
+            content = `<pre style="font-family:monospace; background:${codeBg}; color:${codeColor}; padding:10px; border-radius:4px; font-size:12px; overflow:auto;">${this.app.utils.escapeHtml(res.content)}</pre>`;
+        }
+        else if (res.type === 'color') {
+            const borderC = isDark ? '#3f3f46' : '#ddd';
+            content = `<div style="width:100px; height:60px; background-color:${res.content}; border-radius:4px; border:1px solid ${borderC}; margin-bottom:5px;"></div><div style="text-align:center; font-family:monospace; font-weight:bold;">${res.content}</div>`;
+        }
         else if (res.type === 'audio') content = `<audio controls src="${res.content}" style="width:250px;"></audio>`;
-        else if (res.type === 'link') content = `<div style="font-size:12px; color:#555; margin-bottom:8px; word-break:break-all;">${this.app.utils.escapeHtml(res.content)}</div><a href="${res.content}" target="_blank" style="display:block; text-align:center; background:#667eea; color:white; text-decoration:none; padding:6px; border-radius:4px; font-size:12px;">跳转到链接 🔗</a>`;
+        else if (res.type === 'link') {
+            const linkSub = isDark ? '#a1a1aa' : '#555';
+            content = `<div style="font-size:12px; color:${linkSub}; margin-bottom:8px; word-break:break-all;">${this.app.utils.escapeHtml(res.content)}</div><a href="${res.content}" target="_blank" style="display:block; text-align:center; background:#667eea; color:white; text-decoration:none; padding:6px; border-radius:4px; font-size:12px;">跳转到链接 🔗</a>`;
+        }
 
         this.tooltipEl.innerHTML = content;
         this.tooltipEl.style.display = 'block';
@@ -769,15 +1060,136 @@ export class UIModule {
         this.tooltipEl.style.left = left + 'px';
     }
 
-    toast(m) {
-        const t = this.app.dom.toast;
-        t.innerText = m;
-        t.classList.add('show');
-        setTimeout(() => t.classList.remove('show'), 3000);
+    toast(m, type) {
+        const container = document.getElementById('toastContainer');
+        if (!container) return;
+        const el = document.createElement('div');
+        el.className = 'toast' + (type ? ' ' + type : '');
+        el.textContent = m;
+        el.addEventListener('click', () => {
+            el.classList.remove('show');
+            setTimeout(() => el.remove(), 300);
+        });
+        container.appendChild(el);
+        // Trigger reflow then show
+        el.offsetHeight;
+        el.classList.add('show');
+        setTimeout(() => {
+            el.classList.remove('show');
+            setTimeout(() => el.remove(), 300);
+        }, 3000);
     }
 
     exportImage() {
         this.app.graph.exportImage();
+    }
+
+    toggleExportMenu() {
+        const menu = document.getElementById('exportMenu');
+        menu.classList.toggle('show');
+        if (menu.classList.contains('show')) {
+            const close = (e) => {
+                if (!e.target.closest('.export-dropdown')) {
+                    menu.classList.remove('show');
+                    document.removeEventListener('click', close);
+                }
+            };
+            setTimeout(() => document.addEventListener('click', close), 0);
+        }
+    }
+
+    closeExportMenu() {
+        document.getElementById('exportMenu').classList.remove('show');
+    }
+
+    // [P2-2] Node search
+    toggleNodeSearch() {
+        const bar = document.getElementById('nodeSearchBar');
+        const input = document.getElementById('nodeSearchInput');
+        if (bar.style.display === 'none') {
+            bar.style.display = 'flex';
+            input.value = '';
+            input.focus();
+            this.app.state._searchMatches = [];
+            this.app.state._searchIndex = -1;
+            this.app.graph.searchMatchNodeId = null;
+            document.getElementById('nodeSearchCount').textContent = '';
+            this.app.graph.needsRender = true;
+        } else {
+            bar.style.display = 'none';
+            this.app.state._searchMatches = [];
+            this.app.state._searchIndex = -1;
+            this.app.graph.searchMatchNodeId = null;
+            this.app.graph.needsRender = true;
+        }
+    }
+
+    searchNodes(keyword) {
+        if (!keyword) {
+            this.app.state._searchMatches = [];
+            this.app.state._searchIndex = -1;
+            this.app.graph.searchMatchNodeId = null;
+            document.getElementById('nodeSearchCount').textContent = '';
+            this.app.graph.needsRender = true;
+            return;
+        }
+        const kw = keyword.toLowerCase();
+        this.app.state._searchMatches = this.app.state.nodes.filter(
+            n => !n._deleting && n.label && n.label.toLowerCase().includes(kw)
+        );
+        this.app.state._searchIndex = this.app.state._searchMatches.length > 0 ? 0 : -1;
+        this._updateSearchUI();
+    }
+
+    nodeSearchPrev() {
+        const matches = this.app.state._searchMatches;
+        if (!matches || matches.length === 0) return;
+        this.app.state._searchIndex = (this.app.state._searchIndex - 1 + matches.length) % matches.length;
+        this._updateSearchUI();
+    }
+
+    nodeSearchNext() {
+        const matches = this.app.state._searchMatches;
+        if (!matches || matches.length === 0) return;
+        this.app.state._searchIndex = (this.app.state._searchIndex + 1) % matches.length;
+        this._updateSearchUI();
+    }
+
+    _updateSearchUI() {
+        const matches = this.app.state._searchMatches;
+        const idx = this.app.state._searchIndex;
+        const countEl = document.getElementById('nodeSearchCount');
+        if (!matches || matches.length === 0) {
+            countEl.textContent = '无匹配';
+            this.app.graph.searchMatchNodeId = null;
+        } else {
+            countEl.textContent = `${idx + 1}/${matches.length}`;
+            const node = matches[idx];
+            this.app.graph.searchMatchNodeId = node.id;
+            // Pan camera to center on the matched node
+            const cam = this.app.state.camera;
+            const targetX = this.app.graph.width / 2 - node.x * cam.k;
+            const targetY = this.app.graph.height / 2 - node.y * cam.k;
+            this._animateCamera(targetX, targetY, cam.k);
+        }
+        this.app.graph.needsRender = true;
+    }
+
+    _animateCamera(targetX, targetY, targetK) {
+        const cam = this.app.state.camera;
+        const startX = cam.x, startY = cam.y;
+        const duration = 300;
+        const start = performance.now();
+        const step = (now) => {
+            const t = Math.min(1, (now - start) / duration);
+            const ease = t * (2 - t); // ease-out quad
+            cam.x = startX + (targetX - startX) * ease;
+            cam.y = startY + (targetY - startY) * ease;
+            cam.k = targetK;
+            this.app.graph.needsRender = true;
+            if (t < 1) requestAnimationFrame(step);
+        };
+        requestAnimationFrame(step);
     }
 
     // [Feature 9] Duplicate current project

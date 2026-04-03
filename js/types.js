@@ -12,6 +12,11 @@
  * @property {number} y - Y坐标
  * @property {string} label - 节点显示的文本
  * @property {string|null} resId - 关联的资源ID
+ * @property {'circle'|'rounded-rect'} [shape] - 节点形状 (可选, 默认 circle)
+ * @property {'glass'|'acrylic'|'metallic'|null} [texture] - 质感效果 (可选)
+ * @property {'icon'|'card'} [layout] - 布局模式 (可选, 默认 icon)
+ * @property {'1:1'|'3:4'|'4:3'|'16:9'|null} [cardRatio] - 卡片比例 (可选, 仅 card 布局)
+ * @property {'solid'|'glow'|'gradient'|'double'} [borderStyle] - 边框样式 (可选, 默认 solid)
  * @property {number} [scale] - 缩放比例 (可选)
  * @property {number} [fx] - D3 力导向图固定 X 坐标 (可选)
  * @property {number} [fy] - D3 力导向图固定 Y 坐标 (可选)
@@ -67,6 +72,11 @@
  * @property {boolean} showCrossLinks - 是否显示飞线 (默认 true)
  * @property {boolean} isLinking - 是否正在创建飞线模式
  * @property {Node|null} linkingSourceNode - 飞线起始节点
+ * @property {Link|null} selectedLink - 当前选中的连线
+ * @property {boolean} _batchMode - 批量管理模式
+ * @property {Set<string>|null} _batchSelected - 批量选中的资源ID
+ * @property {Array|null} _searchMatches - 节点搜索匹配结果
+ * @property {number} _searchIndex - 当前搜索结果索引
  */
 
 /**

@@ -104,7 +104,11 @@ export class StorageModule {
 
             this.app.state.currentId = id;
             this.app.state.fileHandle = null;
-            this.app.state.nodes = (proj.nodes || []).map(n => ({...n, scale: 1}));
+            this.app.state.nodes = (proj.nodes || []).map(n => ({
+                ...n, scale: 1,
+                texture: n.texture || (n.glass ? 'glass' : null),
+                shape: n.shape === 'pill' ? 'circle' : n.shape,
+            }));
             this.app.state.links = JSON.parse(JSON.stringify(proj.links || []));
             this.app.state.resources = (proj.resources || []).map(r => ({ ...r, parentId: r.parentId || null }));
 
@@ -116,7 +120,11 @@ export class StorageModule {
             this.app.ui.hideNodeBubble();
 
             this.app.dom.projTitleInput.value = proj.name;
-            this.app.graph.resetCamera();
+            if (proj.camera && typeof proj.camera.x === 'number' && typeof proj.camera.y === 'number' && typeof proj.camera.k === 'number') {
+                this.app.state.camera = { x: proj.camera.x, y: proj.camera.y, k: proj.camera.k };
+            } else {
+                this.app.graph.resetCamera();
+            }
             this.app.graph.imageCache.clear();
             this.app.state.searchKeyword = '';
             this.app.ui.renderResourceTree();
@@ -149,9 +157,14 @@ export class StorageModule {
         this.app.ui.updateSaveStatus('保存中...');
         const currentProjName = this.app.dom.projTitleInput.value || '未命名项目';
 
-        const cleanNodes = this.app.state.nodes.map(n => ({
+        const cleanNodes = this.app.state.nodes
+            .filter(n => !n._deleting && !n._removeNow)
+            .map(n => ({
             id: n.id, type: n.type, x: n.x, y: n.y, label: n.label, resId: n.resId,
-            color: n.color || null, note: n.note || null
+            color: n.color || null, note: n.note || null,
+            shape: n.shape || null, texture: n.texture || null,
+            layout: n.layout || null, borderStyle: n.borderStyle || null,
+            cardRatio: n.cardRatio || null
         }));
         const cleanLinks = this.app.state.links.map(l => ({
             source: l.source.id || l.source,
@@ -159,13 +172,15 @@ export class StorageModule {
             type: l.type // [Fix] 保存连线类型，防止飞线变回普通连线
         }));
 
+        const cam = this.app.state.camera;
         const projData = {
             id: this.app.state.currentId,
             name: currentProjName,
             updated: Date.now(),
             nodes: cleanNodes,
             links: cleanLinks,
-            resources: this.app.state.resources
+            resources: this.app.state.resources,
+            camera: { x: cam.x, y: cam.y, k: cam.k }
         };
 
         try {
@@ -183,7 +198,8 @@ export class StorageModule {
         const newName = (projData.name || '未命名') + ' (导入)';
         const newProj = {
             id: newId, name: newName, created: Date.now(),
-            nodes: projData.nodes || [], links: projData.links || [], resources: projData.resources || []
+            nodes: projData.nodes || [], links: projData.links || [], resources: projData.resources || [],
+            camera: projData.camera || null
         };
         await localforage.setItem(newId, newProj);
         this.app.state.projectsIndex.push({ id: newId, name: newName });
@@ -222,13 +238,20 @@ export class StorageModule {
             meta: { version: config.appVersion, type: 'MindFlowProject', exportedAt: Date.now() },
             project: {
                 name: currentProjName,
-                nodes: this.app.state.nodes.map(n => ({ id: n.id, type: n.type, x: n.x, y: n.y, label: n.label, resId: n.resId })),
+                nodes: this.app.state.nodes.map(n => ({
+                    id: n.id, type: n.type, x: n.x, y: n.y, label: n.label, resId: n.resId,
+                    color: n.color || null, note: n.note || null,
+                    shape: n.shape || null, texture: n.texture || null,
+                    layout: n.layout || null, borderStyle: n.borderStyle || null,
+                    cardRatio: n.cardRatio || null
+                })),
                 links: this.app.state.links.map(l => ({
                     source: l.source.id || l.source,
                     target: l.target.id || l.target,
                     type: l.type // [Fix] 导出文件时同样需要保存类型
                 })),
-                resources: this.app.state.resources
+                resources: this.app.state.resources,
+                camera: this.app.state.camera
             }
         };
         const blob = new Blob([JSON.stringify(exportData, null, 2)], {type: 'application/json'});

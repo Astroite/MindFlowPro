@@ -1,5 +1,5 @@
 export const config = {
-    appVersion: '3.9',
+    appVersion: '4.2',
     nodeRadius: 40,
     subRadius: 30,
     linkDistance: 150,
@@ -19,6 +19,15 @@ export const config = {
         selection: '#818cf8',
         link: '#cbd5e1',
         cross: '#445252'
+    },
+    cardWidth: 120,
+    cardHeight: 80,
+    cardImageRatio: 0.6,
+    cardRatios: {
+        '1:1':  { w: 100, h: 100 },
+        '3:4':  { w: 90,  h: 120 },
+        '4:3':  { w: 120, h: 90  },
+        '16:9': { w: 128, h: 72  }
     },
     colorsDark: {
         primary: '#818cf8',    // 深色模式下稍微亮一点的主色
