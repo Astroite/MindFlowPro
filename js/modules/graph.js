@@ -21,6 +21,10 @@ export class GraphModule {
         // [P1-2] Box selection state
         this.isSelecting = false;
         this.selectionRect = null;
+        // [P2-2] Node search highlight
+        this.searchMatchNodeId = null;
+        // [P2-5] Minimap
+        this.showMinimap = false;
     }
 
     init() {
@@ -62,6 +66,8 @@ export class GraphModule {
             this.canvas.height = this.height;
 
             if (!this.app.state.currentId && this.app.state.nodes.length === 0) {
+                this.resetCamera();
+            } else if (isNaN(this.app.state.camera.k)) {
                 this.resetCamera();
             }
             if (this.app.state.simulation) {
@@ -371,6 +377,13 @@ export class GraphModule {
             ctx.strokeStyle = themeColors.selection; ctx.lineWidth = 2; ctx.stroke();
         }
 
+        // [P2-2] Search match highlight
+        if (this.searchMatchNodeId === n.id) {
+            ctx.beginPath(); ctx.arc(n.x, n.y, r + 8, 0, Math.PI * 2);
+            ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 3;
+            ctx.setLineDash([6, 4]); ctx.stroke(); ctx.setLineDash([]);
+        }
+
         // 6. 绘制文字 [Feature 2] — text wrapping
         ctx.globalAlpha = n.scale;
         ctx.fillStyle = textColor;
@@ -413,6 +426,99 @@ export class GraphModule {
             ctx.textBaseline = 'middle';
             ctx.fillText('+', btnX, btnY + 1);
         }
+    }
+
+    // [P2-5] Minimap
+    drawMinimap(ctx) {
+        const nodes = this.app.state.nodes.filter(n => !isNaN(n.x) && !isNaN(n.y) && !n._deleting);
+        if (nodes.length === 0) return;
+
+        const mmW = 160, mmH = 100, pad = 12;
+        const mmX = this.width - mmW - pad;
+        const mmY = this.height - mmH - pad;
+        const innerPad = 6; // padding inside minimap for node dots
+
+        // Compute world bounds
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        nodes.forEach(n => {
+            if (n.x < minX) minX = n.x;
+            if (n.x > maxX) maxX = n.x;
+            if (n.y < minY) minY = n.y;
+            if (n.y > maxY) maxY = n.y;
+        });
+        const rangeX = maxX - minX || 1;
+        const rangeY = maxY - minY || 1;
+        const drawW = mmW - innerPad * 2;
+        const drawH = mmH - innerPad * 2;
+        const scale = Math.min(drawW / rangeX, drawH / rangeY);
+        const offsetX = mmX + innerPad + (drawW - rangeX * scale) / 2;
+        const offsetY = mmY + innerPad + (drawH - rangeY * scale) / 2;
+
+        // Helper: map world → minimap screen
+        const mapX = wx => offsetX + (wx - minX) * scale;
+        const mapY = wy => offsetY + (wy - minY) * scale;
+
+        ctx.save();
+        ctx.resetTransform();
+
+        const isDark = document.body.getAttribute('data-theme') === 'dark';
+
+        // Clip to minimap area so dots don't bleed outside
+        ctx.beginPath();
+        ctx.roundRect(mmX, mmY, mmW, mmH, 6);
+        ctx.clip();
+
+        // Background
+        ctx.fillStyle = isDark ? 'rgba(30,30,35,0.85)' : 'rgba(255,255,255,0.85)';
+        ctx.fill();
+
+        // Nodes as dots
+        nodes.forEach(n => {
+            const dx = mapX(n.x);
+            const dy = mapY(n.y);
+            ctx.beginPath();
+            ctx.arc(dx, dy, n.type === 'root' ? 4 : 2.5, 0, Math.PI * 2);
+            ctx.fillStyle = n.type === 'root' ? '#6366f1' : (isDark ? '#a1a1aa' : '#71717a');
+            ctx.fill();
+        });
+
+        // Viewport rect
+        const cam = this.app.state.camera;
+        const vpLeft = mapX(-cam.x / cam.k);
+        const vpTop = mapY(-cam.y / cam.k);
+        const vpW = (this.width / cam.k) * scale;
+        const vpH = (this.height / cam.k) * scale;
+        ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.3)';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(vpLeft, vpTop, vpW, vpH);
+
+        // Border (drawn after clip so it's fully visible)
+        ctx.restore();
+        ctx.save();
+        ctx.resetTransform();
+        ctx.strokeStyle = isDark ? '#3f3f46' : '#e2e8f0';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.roundRect(mmX, mmY, mmW, mmH, 6);
+        ctx.stroke();
+        ctx.restore();
+
+        // Store minimap bounds for click handling
+        this._minimapBounds = { x: mmX, y: mmY, w: mmW, h: mmH, minX, minY, scale, offsetX, offsetY, innerPad };
+    }
+
+    // [P2-5] Handle minimap click to pan
+    handleMinimapClick(screenX, screenY) {
+        const b = this._minimapBounds;
+        if (!b) return false;
+        if (screenX < b.x || screenX > b.x + b.w || screenY < b.y || screenY > b.y + b.h) return false;
+        const worldX = (screenX - b.offsetX) / b.scale + b.minX;
+        const worldY = (screenY - b.offsetY) / b.scale + b.minY;
+        const cam = this.app.state.camera;
+        cam.x = this.width / 2 - worldX * cam.k;
+        cam.y = this.height / 2 - worldY * cam.k;
+        this.needsRender = true;
+        return true;
     }
 
     renderLoop() {
@@ -530,6 +636,11 @@ export class GraphModule {
             ctx.strokeRect(x, y, w, h);
             ctx.setLineDash([]);
             ctx.restore();
+        }
+
+        // [P2-5] Draw minimap
+        if (this.showMinimap && this.app.state.nodes.length > 0) {
+            this.drawMinimap(ctx);
         }
 
         ctx.restore();
@@ -738,8 +849,9 @@ export class GraphModule {
         const cam = this.app.state.camera;
         const r = (node.type === 'root' ? config.nodeRadius : config.subRadius) * (node.scale || 1);
         const labelY = node.y + r + 15;
-        const sx = node.x * cam.k + cam.x;
-        const sy = labelY * cam.k + cam.y;
+        const canvasRect = this.canvas.getBoundingClientRect();
+        const sx = (node.x * cam.k + cam.x) + canvasRect.left;
+        const sy = (labelY * cam.k + cam.y) + canvasRect.top;
 
         input.value = node.label || '';
         input.style.display = 'block';
@@ -890,6 +1002,14 @@ export class GraphModule {
             document.getElementById('nodeMenu').style.display = 'none';
 
             if (e.target !== canvas) return;
+
+            // [P2-5] Minimap click
+            if (this.showMinimap && this._minimapBounds) {
+                const rect = canvas.getBoundingClientRect();
+                const sx = (e.clientX || (e.touches && e.touches[0].clientX)) - rect.left;
+                const sy = (e.clientY || (e.touches && e.touches[0].clientY)) - rect.top;
+                if (this.handleMinimapClick(sx, sy)) return;
+            }
 
             if (e.touches && e.touches.length === 2) {
                 const dx = e.touches[0].clientX - e.touches[1].clientX;

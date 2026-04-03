@@ -116,7 +116,11 @@ export class StorageModule {
             this.app.ui.hideNodeBubble();
 
             this.app.dom.projTitleInput.value = proj.name;
-            this.app.graph.resetCamera();
+            if (proj.camera && typeof proj.camera.x === 'number' && typeof proj.camera.y === 'number' && typeof proj.camera.k === 'number') {
+                this.app.state.camera = { x: proj.camera.x, y: proj.camera.y, k: proj.camera.k };
+            } else {
+                this.app.graph.resetCamera();
+            }
             this.app.graph.imageCache.clear();
             this.app.state.searchKeyword = '';
             this.app.ui.renderResourceTree();
@@ -159,13 +163,15 @@ export class StorageModule {
             type: l.type // [Fix] 保存连线类型，防止飞线变回普通连线
         }));
 
+        const cam = this.app.state.camera;
         const projData = {
             id: this.app.state.currentId,
             name: currentProjName,
             updated: Date.now(),
             nodes: cleanNodes,
             links: cleanLinks,
-            resources: this.app.state.resources
+            resources: this.app.state.resources,
+            camera: { x: cam.x, y: cam.y, k: cam.k }
         };
 
         try {
@@ -183,7 +189,8 @@ export class StorageModule {
         const newName = (projData.name || '未命名') + ' (导入)';
         const newProj = {
             id: newId, name: newName, created: Date.now(),
-            nodes: projData.nodes || [], links: projData.links || [], resources: projData.resources || []
+            nodes: projData.nodes || [], links: projData.links || [], resources: projData.resources || [],
+            camera: projData.camera || null
         };
         await localforage.setItem(newId, newProj);
         this.app.state.projectsIndex.push({ id: newId, name: newName });
@@ -228,7 +235,8 @@ export class StorageModule {
                     target: l.target.id || l.target,
                     type: l.type // [Fix] 导出文件时同样需要保存类型
                 })),
-                resources: this.app.state.resources
+                resources: this.app.state.resources,
+                camera: this.app.state.camera
             }
         };
         const blob = new Blob([JSON.stringify(exportData, null, 2)], {type: 'application/json'});

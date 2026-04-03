@@ -625,3 +625,55 @@ canvas:active { cursor: grabbing; }
 .tag-chip.active { background: var(--primary); color: white; }
 .res-tags { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 3px; }
 .res-tag { font-size: 10px; padding: 1px 6px; border-radius: 10px; background: rgba(99,102,241,0.1); color: var(--primary); }
+
+/* [P2-4] Batch mode */
+.batch-bar {
+    display: flex; align-items: center; gap: 6px; padding: 8px 12px;
+    background: var(--bg-panel); border-top: 1px solid var(--border-color);
+    font-size: 12px; color: var(--text-secondary); flex-wrap: wrap;
+}
+.batch-folder-select {
+    flex: 1; min-width: 80px; padding: 4px 6px; border-radius: 4px;
+    border: 1px solid var(--border-color); background: var(--bg-app); color: var(--text-main); font-size: 12px;
+}
+.batch-action-btn { font-size: 12px; padding: 4px 8px; white-space: nowrap; }
+.batch-checkbox {
+    width: 16px; height: 16px; cursor: pointer; accent-color: var(--primary);
+    margin-right: 4px; flex-shrink: 0;
+}
+.res-item.batch-selected { background: rgba(99,102,241,0.08); }
+.btn-danger {
+    background: #ef4444; color: white; border: none; border-radius: 6px;
+    padding: 6px 12px; cursor: pointer; font-size: 12px; transition: background 0.15s;
+}
+.btn-danger:hover { background: #dc2626; }
+
+/* [P2-2] Node search bar */
+.node-search-bar {
+    display: flex; align-items: center; gap: 6px;
+    background: var(--bg-panel); border: 1px solid var(--border-color);
+    border-radius: 8px; padding: 4px 8px; margin-left: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+.node-search-input {
+    width: 160px; border: none; background: transparent; color: var(--text-main);
+    font-size: 13px; outline: none; padding: 4px;
+}
+.node-search-count {
+    font-size: 12px; color: var(--text-secondary); white-space: nowrap; min-width: 40px; text-align: center;
+}
+.node-search-btn {
+    background: none; border: 1px solid var(--border-color); border-radius: 4px;
+    cursor: pointer; padding: 2px 6px; font-size: 12px; color: var(--text-secondary);
+    transition: background 0.15s;
+}
+.node-search-btn:hover { background: rgba(128,128,128,0.12); }
+
+/* [P2-3] Shortcuts table */
+.shortcuts-table { width: 100%; border-collapse: collapse; }
+.shortcuts-table td { padding: 8px 12px; border-bottom: 1px solid var(--border-color); font-size: 13px; }
+.shortcuts-table td:first-child { white-space: nowrap; width: 45%; }
+.shortcuts-table kbd {
+    display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 12px; font-family: monospace;
+    background: rgba(128,128,128,0.12); border: 1px solid var(--border-color); color: var(--text-main);
+}

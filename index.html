@@ -55,9 +55,17 @@
             </div>
         </div>
 
-        <div class="sidebar-footer">
+        <div class="sidebar-footer" id="sidebarFooter">
             <button class="btn-secondary" style="flex:1;" onclick="app.ui.handleCreateFolder()" title="新建文件夹">📁</button>
             <button class="btn-primary" style="flex:3;" onclick="app.ui.openResModal()">+ 添加资源</button>
+            <button class="btn-secondary" style="flex:1;" onclick="app.ui.toggleBatchMode()" title="批量管理">☑️</button>
+        </div>
+        <div class="batch-bar" id="batchBar" style="display:none;">
+            <span id="batchCount">已选 0 项</span>
+            <select id="batchFolderSelect" class="batch-folder-select"><option value="">移到...</option></select>
+            <button class="btn-secondary batch-action-btn" onclick="app.ui.batchMoveToFolder()">📂 移动</button>
+            <button class="btn-danger batch-action-btn" onclick="app.ui.batchDelete()">🗑️ 删除</button>
+            <button class="btn-secondary batch-action-btn" onclick="app.ui.toggleBatchMode()">取消</button>
         </div>
     </div>
 
@@ -74,10 +82,20 @@
             <button class="tool-btn" onclick="app.storage.forceSave()" title="保存到浏览器数据库"><span>☁️ 保存</span></button>
             <button class="tool-btn" onclick="app.ui.exportImage()" title="导出为图片"><span>📷 导出</span></button>
             <button class="tool-btn" onclick="app.graph.exportSVG()" title="导出为 SVG"><span>📐 SVG</span></button>
+            <button class="tool-btn" id="btnToggleMinimap" onclick="app.ui.toggleMinimap()" title="显示/隐藏小地图"><span>🗺️</span></button>
             <button class="tool-btn danger" onclick="app.graph.clearAll()" title="清空画布"><span>🗑️ 清空</span></button>
             <div class="divider"></div>
             <button class="tool-btn" onclick="app.ui.toggleTheme()" title="切换深色/浅色模式"><span>🌗</span></button>
+            <button class="tool-btn" onclick="app.ui.toggleNodeSearch()" title="搜索节点"><span>🔍</span></button>
             <a href="https://astroite.com/article/8cd061ed/" target="_blank" class="tool-btn" style="text-decoration: none; color: var(--primary);" title="说明书"><span>❓</span></a>
+            <button class="tool-btn" onclick="document.getElementById('shortcutsModal').style.display='flex'" title="快捷键帮助 (?)"><span>⌨️</span></button>
+            <div class="node-search-bar" id="nodeSearchBar" style="display:none;">
+                <input type="text" id="nodeSearchInput" class="node-search-input" placeholder="搜索节点..." oninput="app.ui.searchNodes(this.value)">
+                <span id="nodeSearchCount" class="node-search-count"></span>
+                <button class="node-search-btn" onclick="app.ui.nodeSearchPrev()" title="上一个">▲</button>
+                <button class="node-search-btn" onclick="app.ui.nodeSearchNext()" title="下一个">▼</button>
+                <button class="node-search-btn" onclick="app.ui.toggleNodeSearch()" title="关闭">✕</button>
+            </div>
         </div>
 
         <div id="saveStatus" class="status-text">就绪</div>
@@ -234,6 +252,36 @@
 
 <!-- [P1-3] Inline edit input for node labels -->
 <input type="text" id="inlineEditInput" class="inline-edit-input" style="display:none;">
+
+<!-- [P2-3] Keyboard shortcuts help modal -->
+<div class="modal-overlay" id="shortcutsModal" style="display:none;">
+    <div class="modern-modal" style="max-width:480px;">
+        <div class="panel-header">
+            <h3>⌨️ 快捷键</h3>
+            <button class="close-btn" onclick="app.ui.closeModal('shortcutsModal')">×</button>
+        </div>
+        <div class="panel-body" style="max-height:60vh;overflow-y:auto;">
+            <table class="shortcuts-table">
+                <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd></td><td>撤销</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>Y</kbd></td><td>重做</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>N</kbd></td><td>新建根节点</td></tr>
+                <tr><td><kbd>Tab</kbd></td><td>为选中节点添加子节点</td></tr>
+                <tr><td><kbd>F2</kbd></td><td>编辑节点标签</td></tr>
+                <tr><td><kbd>Delete</kbd></td><td>删除选中节点/连线</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>C</kbd></td><td>复制节点</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>V</kbd></td><td>粘贴节点</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>D</kbd></td><td>复制选中节点</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>保存</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>E</kbd></td><td>导出图片</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>F</kbd></td><td>搜索资源</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>G</kbd></td><td>搜索节点 (下一个)</td></tr>
+                <tr><td><kbd>Alt</kbd>+<kbd>L</kbd></td><td>切换飞线显示</td></tr>
+                <tr><td><kbd>Shift</kbd>+拖拽</td><td>平移画布</td></tr>
+                <tr><td><kbd>?</kbd></td><td>显示此帮助</td></tr>
+            </table>
+        </div>
+    </div>
+</div>
 
 <!-- [Feature 3] Full-screen resource viewer modal -->
 <div class="modal-overlay" id="viewerModal" style="display:none;">

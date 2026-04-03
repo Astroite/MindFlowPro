@@ -237,6 +237,28 @@ export class UIModule {
                     e.preventDefault(); this.app.data.duplicateSelectedNodes();
                 }
             }
+            // [P2-3] ? — show shortcuts help
+            if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                e.preventDefault();
+                document.getElementById('shortcutsModal').style.display = 'flex';
+            }
+            // [P2-2] Ctrl+G — jump to next node search match
+            if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase() === 'g') {
+                e.preventDefault();
+                const bar = document.getElementById('nodeSearchBar');
+                if (bar.style.display !== 'none') {
+                    this.nodeSearchNext();
+                } else {
+                    this.toggleNodeSearch();
+                }
+            }
+            // [P2-2] Escape — close node search bar
+            if (e.key === 'Escape') {
+                const bar = document.getElementById('nodeSearchBar');
+                if (bar.style.display !== 'none') {
+                    this.toggleNodeSearch();
+                }
+            }
         });
     }
 
@@ -305,13 +327,17 @@ export class UIModule {
         let childHtml = '';
         childFolders.forEach(f => { childHtml += this._renderFolderHtml(f, allResources, keyword, activeTag, depth + 1); });
         childFiles.forEach(f => { childHtml += this.createResItemHtml(f, keyword); });
+        const batchMode = this.app.state._batchMode;
+        const batchChecked = this.app.state._batchSelected && this.app.state._batchSelected.has(folder.id);
+        const batchCb = batchMode ? `<input type="checkbox" class="batch-checkbox" id="batch-cb-${folder.id}" ${batchChecked?'checked':''} onclick="event.stopPropagation();app.ui.toggleBatchSelect('${folder.id}')">` : '';
         return `
-            <div class="res-folder ${isOpen?'open':''}" style="padding-left:${pl}px"
+            <div class="res-folder ${isOpen?'open':''} ${batchChecked?'batch-selected':''}" style="padding-left:${pl}px"
                  onclick="app.ui.toggleFolder('${folder.id}')"
                  oncontextmenu="event.preventDefault();app.ui.handleRenameFolder('${folder.id}')"
                  ondragover="app.ui.dragOver(event,'${folder.id}')"
                  ondrop="app.ui.drop(event,'${folder.id}')"
                  ondragleave="app.ui.dragLeave(event)" title="右键点击可快速重命名">
+                ${batchCb}
                 <div class="folder-icon">▶</div>
                 <div class="res-info"><div class="res-name">${this.highlightText(folder.name, keyword)}</div></div>
                 <div class="res-actions">
@@ -332,12 +358,17 @@ export class UIModule {
         // [Feature 8] Tags
         const tagsHtml = r.tags && r.tags.length ? `<div class="res-tags">${r.tags.map(t=>`<span class="res-tag">${this.app.utils.escapeHtml(t)}</span>`).join('')}</div>` : '';
 
+        const batchMode = this.app.state._batchMode;
+        const batchChecked = this.app.state._batchSelected && this.app.state._batchSelected.has(r.id);
+        const batchCb = batchMode ? `<input type="checkbox" class="batch-checkbox" id="batch-cb-${r.id}" ${batchChecked?'checked':''} onclick="event.stopPropagation();app.ui.toggleBatchSelect('${r.id}')">` : '';
+
         return `
-            <div class="res-item"
+            <div class="res-item ${batchChecked?'batch-selected':''}"
                  draggable="true"
                  ondragstart="app.ui.dragStart(event, '${r.id}')"
                  onmouseenter="app.ui.showSidebarPreview('${r.id}', event)"
                  onmouseleave="app.ui.hideTooltip()">
+                ${batchCb}
                 <div class="res-icon" onclick="app.ui.viewResource('${r.id}')">${icon}</div>
                 <div class="res-info" onclick="app.ui.viewResource('${r.id}')">
                     <div class="res-name">${this.highlightText(r.name, keyword)}</div>
@@ -422,6 +453,74 @@ export class UIModule {
         const msg = res.type === 'folder' ? '确定删除此文件夹及其所有内容吗？此操作不可恢复。' : '确定删除此资源吗？';
         const confirmed = await this.confirmDialog(msg);
         if (confirmed) this.app.data.deleteResource(id);
+    }
+
+    // [P2-4] Batch mode
+    toggleBatchMode() {
+        const batchMode = !this.app.state._batchMode;
+        this.app.state._batchMode = batchMode;
+        this.app.state._batchSelected = new Set();
+        document.getElementById('batchBar').style.display = batchMode ? 'flex' : 'none';
+        document.getElementById('sidebarFooter').style.display = batchMode ? 'none' : 'flex';
+        if (batchMode) this._populateBatchFolderSelect();
+        this.renderResourceTree();
+    }
+
+    _populateBatchFolderSelect() {
+        const sel = document.getElementById('batchFolderSelect');
+        const folders = this.app.state.resources.filter(r => r.type === 'folder');
+        let html = '<option value="">移到...</option>';
+        html += '<option value="__root__">(根目录)</option>';
+        const buildOpts = (parentId, depth) => {
+            return folders.filter(f => f.parentId === parentId).map(f => {
+                const indent = '\u3000'.repeat(depth);
+                const childHtml = buildOpts(f.id, depth + 1);
+                return `<option value="${f.id}">${indent}📁 ${this.app.utils.escapeHtml(f.name)}</option>${childHtml}`;
+            }).join('');
+        };
+        html += buildOpts(null, 0);
+        sel.innerHTML = html;
+    }
+
+    toggleBatchSelect(id) {
+        if (this.app.state._batchSelected.has(id)) {
+            this.app.state._batchSelected.delete(id);
+        } else {
+            this.app.state._batchSelected.add(id);
+        }
+        document.getElementById('batchCount').textContent = `已选 ${this.app.state._batchSelected.size} 项`;
+        // Update visual
+        const checkbox = document.getElementById(`batch-cb-${id}`);
+        if (checkbox) checkbox.checked = this.app.state._batchSelected.has(id);
+        const item = checkbox ? checkbox.closest('.res-item, .res-folder') : null;
+        if (item) item.classList.toggle('batch-selected', this.app.state._batchSelected.has(id));
+    }
+
+    async batchDelete() {
+        const ids = [...this.app.state._batchSelected];
+        if (ids.length === 0) return this.toast('请先选择资源');
+        const confirmed = await this.confirmDialog(`确定删除选中的 ${ids.length} 项资源吗？`);
+        if (!confirmed) return;
+        ids.forEach(id => this.app.data.deleteResource(id));
+        this.app.state._batchSelected.clear();
+        document.getElementById('batchCount').textContent = '已选 0 项';
+        this.toast(`已删除 ${ids.length} 项`);
+    }
+
+    batchMoveToFolder() {
+        const targetId = document.getElementById('batchFolderSelect').value;
+        if (!targetId) return this.toast('请选择目标文件夹');
+        const ids = [...this.app.state._batchSelected];
+        if (ids.length === 0) return this.toast('请先选择资源');
+        const parentId = targetId === '__root__' ? null : targetId;
+        ids.forEach(id => {
+            const res = this.app.state.resources.find(r => r.id === id);
+            if (res) res.parentId = parentId;
+        });
+        this.app.state._batchSelected.clear();
+        this.app.storage.triggerSave();
+        this.renderResourceTree();
+        this.toast(`已移动 ${ids.length} 项`);
     }
 
     handleEditResource(id) {
@@ -765,6 +864,14 @@ export class UIModule {
         }
     }
 
+    // [P2-5] Toggle minimap
+    toggleMinimap() {
+        this.app.graph.showMinimap = !this.app.graph.showMinimap;
+        this.app.graph.needsRender = true;
+        const btn = document.getElementById('btnToggleMinimap');
+        if (btn) btn.classList.toggle('disabled', !this.app.graph.showMinimap);
+    }
+
     dragStart(e, id) {
         e.dataTransfer.setData('text/plain', id); e.dataTransfer.effectAllowed = 'move';
         this.app.state.draggedResId = id; e.target.classList.add('dragging');
@@ -891,6 +998,96 @@ export class UIModule {
 
     exportImage() {
         this.app.graph.exportImage();
+    }
+
+    // [P2-2] Node search
+    toggleNodeSearch() {
+        const bar = document.getElementById('nodeSearchBar');
+        const input = document.getElementById('nodeSearchInput');
+        if (bar.style.display === 'none') {
+            bar.style.display = 'flex';
+            input.value = '';
+            input.focus();
+            this.app.state._searchMatches = [];
+            this.app.state._searchIndex = -1;
+            this.app.graph.searchMatchNodeId = null;
+            document.getElementById('nodeSearchCount').textContent = '';
+            this.app.graph.needsRender = true;
+        } else {
+            bar.style.display = 'none';
+            this.app.state._searchMatches = [];
+            this.app.state._searchIndex = -1;
+            this.app.graph.searchMatchNodeId = null;
+            this.app.graph.needsRender = true;
+        }
+    }
+
+    searchNodes(keyword) {
+        if (!keyword) {
+            this.app.state._searchMatches = [];
+            this.app.state._searchIndex = -1;
+            this.app.graph.searchMatchNodeId = null;
+            document.getElementById('nodeSearchCount').textContent = '';
+            this.app.graph.needsRender = true;
+            return;
+        }
+        const kw = keyword.toLowerCase();
+        this.app.state._searchMatches = this.app.state.nodes.filter(
+            n => !n._deleting && n.label && n.label.toLowerCase().includes(kw)
+        );
+        this.app.state._searchIndex = this.app.state._searchMatches.length > 0 ? 0 : -1;
+        this._updateSearchUI();
+    }
+
+    nodeSearchPrev() {
+        const matches = this.app.state._searchMatches;
+        if (!matches || matches.length === 0) return;
+        this.app.state._searchIndex = (this.app.state._searchIndex - 1 + matches.length) % matches.length;
+        this._updateSearchUI();
+    }
+
+    nodeSearchNext() {
+        const matches = this.app.state._searchMatches;
+        if (!matches || matches.length === 0) return;
+        this.app.state._searchIndex = (this.app.state._searchIndex + 1) % matches.length;
+        this._updateSearchUI();
+    }
+
+    _updateSearchUI() {
+        const matches = this.app.state._searchMatches;
+        const idx = this.app.state._searchIndex;
+        const countEl = document.getElementById('nodeSearchCount');
+        if (!matches || matches.length === 0) {
+            countEl.textContent = '无匹配';
+            this.app.graph.searchMatchNodeId = null;
+        } else {
+            countEl.textContent = `${idx + 1}/${matches.length}`;
+            const node = matches[idx];
+            this.app.graph.searchMatchNodeId = node.id;
+            // Pan camera to center on the matched node
+            const cam = this.app.state.camera;
+            const targetX = this.app.graph.width / 2 - node.x * cam.k;
+            const targetY = this.app.graph.height / 2 - node.y * cam.k;
+            this._animateCamera(targetX, targetY, cam.k);
+        }
+        this.app.graph.needsRender = true;
+    }
+
+    _animateCamera(targetX, targetY, targetK) {
+        const cam = this.app.state.camera;
+        const startX = cam.x, startY = cam.y;
+        const duration = 300;
+        const start = performance.now();
+        const step = (now) => {
+            const t = Math.min(1, (now - start) / duration);
+            const ease = t * (2 - t); // ease-out quad
+            cam.x = startX + (targetX - startX) * ease;
+            cam.y = startY + (targetY - startY) * ease;
+            cam.k = targetK;
+            this.app.graph.needsRender = true;
+            if (t < 1) requestAnimationFrame(step);
+        };
+        requestAnimationFrame(step);
     }
 
     // [Feature 9] Duplicate current project
