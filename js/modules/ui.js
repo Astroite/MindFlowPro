@@ -1084,6 +1084,24 @@ export class UIModule {
         this.app.graph.exportImage();
     }
 
+    toggleExportMenu() {
+        const menu = document.getElementById('exportMenu');
+        menu.classList.toggle('show');
+        if (menu.classList.contains('show')) {
+            const close = (e) => {
+                if (!e.target.closest('.export-dropdown')) {
+                    menu.classList.remove('show');
+                    document.removeEventListener('click', close);
+                }
+            };
+            setTimeout(() => document.addEventListener('click', close), 0);
+        }
+    }
+
+    closeExportMenu() {
+        document.getElementById('exportMenu').classList.remove('show');
+    }
+
     // [P2-2] Node search
     toggleNodeSearch() {
         const bar = document.getElementById('nodeSearchBar');

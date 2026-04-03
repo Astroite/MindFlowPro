@@ -71,24 +71,27 @@
 
     <div class="main-area">
         <div class="toolbar">
-            <button class="tool-btn" onclick="app.ui.toggleSidebar()" title="菜单">☰</button>
-            <div class="divider"></div>
-            <button class="tool-btn primary" onclick="app.graph.addRootNode()" title="添加根节点"><span>🎯 根节点</span></button>
-            <button class="tool-btn" onclick="app.graph.resetCamera()" title="视图归位"><span>🔎 归位</span></button>
-            <button class="tool-btn" id="btnToggleLinks" onclick="app.ui.toggleCrossLinks()" title="显示/隐藏飞线 (Alt+L)"><span>👁️ 飞线</span></button>
-            <div class="divider"></div>
-            <input type="text" id="projTitleInput" class="project-title-input" placeholder="未命名项目" onchange="app.data.renameProject(this.value)" title="点击重命名项目">
-            <div class="divider"></div>
-            <button class="tool-btn" onclick="app.storage.forceSave()" title="保存到浏览器数据库"><span>☁️ 保存</span></button>
-            <button class="tool-btn" onclick="app.ui.exportImage()" title="导出为图片"><span>📷 导出</span></button>
-            <button class="tool-btn" onclick="app.graph.exportSVG()" title="导出为 SVG"><span>📐 SVG</span></button>
-            <button class="tool-btn" id="btnToggleMinimap" onclick="app.ui.toggleMinimap()" title="显示/隐藏小地图"><span>🗺️</span></button>
-            <button class="tool-btn danger" onclick="app.graph.clearAll()" title="清空画布"><span>🗑️ 清空</span></button>
-            <div class="divider"></div>
-            <button class="tool-btn" onclick="app.ui.toggleTheme()" title="切换深色/浅色模式"><span>🌗</span></button>
-            <button class="tool-btn" onclick="app.ui.toggleNodeSearch()" title="搜索节点"><span>🔍</span></button>
-            <a href="https://astroite.com/article/8cd061ed/" target="_blank" class="tool-btn" style="text-decoration: none; color: var(--primary);" title="说明书"><span>❓</span></a>
-            <button class="tool-btn" onclick="document.getElementById('shortcutsModal').style.display='flex'" title="快捷键帮助 (?)"><span>⌨️</span></button>
+            <div class="toolbar-left">
+                <button class="tool-btn" onclick="app.ui.toggleSidebar()" title="菜单">☰</button>
+                <button class="tool-btn primary" onclick="app.graph.addRootNode()" title="添加根节点"><span>+ 根节点</span></button>
+            </div>
+            <div class="toolbar-center">
+                <input type="text" id="projTitleInput" class="project-title-input" placeholder="未命名项目" onchange="app.data.renameProject(this.value)" title="点击重命名项目">
+            </div>
+            <div class="toolbar-right">
+                <button class="tool-btn" onclick="app.graph.resetCamera()" title="视图归位 (双击画布)">🔎</button>
+                <div class="export-dropdown">
+                    <button class="tool-btn" onclick="app.ui.toggleExportMenu()" title="导出">📤 <span class="dropdown-arrow">▾</span></button>
+                    <div class="export-menu" id="exportMenu">
+                        <button onclick="app.ui.exportImage(); app.ui.closeExportMenu()">📷 导出 PNG</button>
+                        <button onclick="app.graph.exportSVG(); app.ui.closeExportMenu()">📐 导出 SVG</button>
+                    </div>
+                </div>
+                <button class="tool-btn" id="btnToggleMinimap" onclick="app.ui.toggleMinimap()" title="小地图">🗺️</button>
+                <button class="tool-btn" onclick="app.ui.toggleTheme()" title="切换主题">🌗</button>
+                <button class="tool-btn" onclick="app.ui.toggleNodeSearch()" title="搜索节点">🔍</button>
+                <button class="tool-btn" onclick="document.getElementById('shortcutsModal').style.display='flex'" title="快捷键">⌨️</button>
+            </div>
             <div class="node-search-bar" id="nodeSearchBar" style="display:none;">
                 <input type="text" id="nodeSearchInput" class="node-search-input" placeholder="搜索节点..." oninput="app.ui.searchNodes(this.value)">
                 <span id="nodeSearchCount" class="node-search-count"></span>
