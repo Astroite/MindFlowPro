@@ -29,7 +29,7 @@ export class UIModule {
 
     initTooltip() {
         this.tooltipEl = document.createElement('div');
-        this.tooltipEl.id = 'mindflow-tooltip';
+        this.tooltipEl.className = 'mindflow-tooltip';
         Object.assign(this.tooltipEl.style, {
             position: 'fixed', display: 'none', zIndex: '1000',
             borderRadius: '6px',
@@ -157,8 +157,7 @@ export class UIModule {
             input.style.display = '';
             input.placeholder = placeholder;
             input.value = defaultValue;
-            document.getElementById('inputModal').style.display = 'flex';
-            setTimeout(() => input.focus(), 100);
+            this.openModal('inputModal');
         });
     }
 
@@ -169,11 +168,54 @@ export class UIModule {
             document.getElementById('inputModalTitle').innerText = msg;
             const input = document.getElementById('inputModalValue');
             input.style.display = 'none';
-            document.getElementById('inputModal').style.display = 'flex';
+            this.openModal('inputModal');
         });
     }
 
     bindGlobalEvents() {
+        // Event delegation for data-action buttons
+        document.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-action]');
+            if (!btn) return;
+            const action = btn.dataset.action;
+            const actions = {
+                saveDisk: () => this.app.storage.triggerSaveDisk(),
+                openDisk: () => this.app.storage.triggerOpenDisk(),
+                duplicateProject: () => this.duplicateCurrentProject(),
+                deleteProject: () => this.confirmDeleteProject(),
+                createFolder: () => this.handleCreateFolder(),
+                openResModal: () => this.openResModal(),
+                toggleBatchMode: () => this.toggleBatchMode(),
+                batchMove: () => this.batchMoveToFolder(),
+                batchDelete: () => this.batchDelete(),
+                toggleSidebar: () => this.toggleSidebar(),
+                addRootNode: () => this.app.graph.addRootNode(),
+                resetCamera: () => this.app.graph.resetCamera(),
+                toggleExportMenu: () => this.toggleExportMenu(),
+                exportPng: () => { this.exportImage(); this.closeExportMenu(); },
+                exportSvg: () => { this.app.graph.exportSVG(); this.closeExportMenu(); },
+                toggleMinimap: () => this.toggleMinimap(),
+                toggleTheme: () => this.toggleTheme(),
+                toggleNodeSearch: () => this.toggleNodeSearch(),
+                openShortcuts: () => this.openModal('shortcutsModal'),
+                nodeSearchPrev: () => this.nodeSearchPrev(),
+                nodeSearchNext: () => this.nodeSearchNext(),
+                bubbleEdit: () => this.onBubbleEdit(),
+                bubbleLink: () => this.onBubbleLink(),
+                bubbleDelete: () => this.onBubbleDelete(),
+                closeModal: () => this.closeModal(btn.dataset.modal),
+                closeNodeMenu: () => { document.getElementById('nodeMenu').style.display = 'none'; },
+                saveResource: () => this.handleSaveResourceClick(),
+                saveNodeEdit: () => this.handleSaveNodeEdit(),
+            };
+            if (actions[action]) actions[action]();
+        });
+
+        // Project title rename on change
+        this.app.dom.projTitleInput.addEventListener('change', (e) => {
+            this.app.data.renameProject(e.target.value);
+        });
+
         this.app.dom.projSelect.addEventListener('change', async (e) => {
             if (e.target.value === '__new__') {
                 const name = await this.promptUser('新建项目', '请输入项目名称');
@@ -291,7 +333,7 @@ export class UIModule {
             // [P2-3] ? — show shortcuts help
             if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey) {
                 e.preventDefault();
-                document.getElementById('shortcutsModal').style.display = 'flex';
+                this.openModal('shortcutsModal');
             }
             // [P2-2] Ctrl+G — jump to next node search match
             if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase() === 'g') {
@@ -303,11 +345,19 @@ export class UIModule {
                     this.toggleNodeSearch();
                 }
             }
-            // [P2-2] Escape — close node search bar
+            // [P2-2] Escape — close open modal or node search bar
             if (e.key === 'Escape') {
-                const bar = document.getElementById('nodeSearchBar');
-                if (bar.style.display !== 'none') {
-                    this.toggleNodeSearch();
+                const modals = ['inputModal', 'resModal', 'shortcutsModal', 'viewerModal'];
+                let closed = false;
+                for (const id of modals) {
+                    const el = document.getElementById(id);
+                    if (el && el.style.display !== 'none') { this.closeModal(id); closed = true; break; }
+                }
+                if (!closed) {
+                    const bar = document.getElementById('nodeSearchBar');
+                    if (bar.style.display !== 'none') {
+                        this.toggleNodeSearch();
+                    }
                 }
             }
         });
@@ -626,7 +676,7 @@ export class UIModule {
         }
 
         this.toggleResInput();
-        document.getElementById('resModal').style.display='flex';
+        this.openModal('resModal');
     }
 
     async handleSaveResourceClick() {
@@ -709,7 +759,24 @@ export class UIModule {
         if (confirmed) this.app.storage.deleteProject(this.app.state.currentId);
     }
 
-    closeModal(id) { document.getElementById(id).style.display='none'; }
+    closeModal(id) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.style.display = 'none';
+        // Restore focus to previously focused element
+        if (el._restoreFocus) { el._restoreFocus.focus(); el._restoreFocus = null; }
+    }
+
+    openModal(id) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        // Save current focus and show
+        el._restoreFocus = document.activeElement;
+        el.style.display = 'flex';
+        // Focus first focusable element inside
+        const focusable = el.querySelector('input, button, [tabindex]:not([tabindex="-1"])');
+        if (focusable) setTimeout(() => focusable.focus(), 50);
+    }
 
     toggleTheme() {
         const body = document.body;
@@ -764,9 +831,11 @@ export class UIModule {
         // Stop any playing audio first
         contentEl.querySelectorAll('audio').forEach(a => a.pause());
         if (res.type === 'image') {
-            contentEl.innerHTML = `<img src="${res.content}" alt="${this.app.utils.escapeHtml(res.name)}">`;
+            if (!this.app.utils.isSafeUrl(res.content)) contentEl.textContent = '不安全的图片来源';
+            else contentEl.innerHTML = `<img src="${res.content}" alt="${this.app.utils.escapeHtml(res.name)}">`;
         } else if (res.type === 'md') {
-            let html = marked.parse(res.content || '');
+            let html = '';
+            try { html = marked.parse(res.content || ''); } catch (e) { console.error(e); }
             html = this.app.utils.purifyHTML(html);
             contentEl.innerHTML = `<div class="md-preview">${html}</div>`;
         } else if (res.type === 'code') {
@@ -774,14 +843,16 @@ export class UIModule {
         } else if (res.type === 'color') {
             contentEl.innerHTML = `<div style="width:160px;height:100px;background:${this.app.utils.escapeHtml(res.content)};border-radius:12px;margin:auto;box-shadow:var(--shadow-md)"></div><p style="text-align:center;margin-top:16px;font-family:monospace;font-size:24px;font-weight:bold;">${this.app.utils.escapeHtml(res.content)}</p>`;
         } else if (res.type === 'audio') {
-            contentEl.innerHTML = `<audio controls src="${res.content}" style="margin:auto;"></audio>`;
+            if (!this.app.utils.isSafeUrl(res.content)) contentEl.textContent = '不安全的音频来源';
+            else contentEl.innerHTML = `<audio controls src="${res.content}" style="margin:auto;"></audio>`;
         } else if (res.type === 'link') {
-            contentEl.innerHTML = `<p style="word-break:break-all;margin-bottom:16px;color:var(--text-sub);">${this.app.utils.escapeHtml(res.content)}</p><a href="${res.content}" target="_blank" style="display:inline-block;background:var(--primary);color:white;text-decoration:none;padding:10px 20px;border-radius:8px;">跳转到链接 🔗</a>`;
+            const safeUrl = this.app.utils.isSafeUrl(res.content) ? res.content : '#';
+            contentEl.innerHTML = `<p style="word-break:break-all;margin-bottom:16px;color:var(--text-sub);">${this.app.utils.escapeHtml(res.content)}</p><a href="${safeUrl}" target="_blank" style="display:inline-block;background:var(--primary);color:white;text-decoration:none;padding:10px 20px;border-radius:8px;">跳转到链接 🔗</a>`;
         }
         if (res.note) {
             contentEl.innerHTML += `<div style="margin-top:20px;padding:12px 16px;background:var(--bg-app);border-radius:8px;border-left:3px solid #f59e0b;"><span style="font-size:12px;color:var(--text-sub);display:block;margin-bottom:4px;">备注</span>${this.app.utils.escapeHtml(res.note)}</div>`;
         }
-        document.getElementById('viewerModal').style.display = 'flex';
+        this.openModal('viewerModal');
     }
 
     // [Feature 4] openNodeMenu — populate color fields
@@ -994,9 +1065,12 @@ export class UIModule {
         const isDark = document.body.getAttribute('data-theme') === 'dark';
 
         let content = '';
-        if (res.type === 'image') content = `<img src="${res.content}" style="max-width:100%; max-height:200px; display:block; border-radius:4px;">`;
+        if (res.type === 'image') {
+            content = this.app.utils.isSafeUrl(res.content) ? `<img src="${res.content}" style="max-width:100%; max-height:200px; display:block; border-radius:4px;">` : '不安全的图片来源';
+        }
         else if (res.type === 'md') {
-            let html = marked.parse(res.content);
+            let html = '';
+            try { html = marked.parse(res.content); } catch (e) { console.error(e); }
             html = this.app.utils.purifyHTML(html);
             const mdBg = isDark ? '#1e1e1e' : '#f8f9fa';
             content = `<div class="md-preview" style="background:${mdBg}; padding:10px; border-radius:4px; max-height:280px; overflow-y:auto;">${html}</div>`;
@@ -1008,12 +1082,15 @@ export class UIModule {
         }
         else if (res.type === 'color') {
             const borderC = isDark ? '#3f3f46' : '#ddd';
-            content = `<div style="width:100px; height:60px; background-color:${res.content}; border-radius:4px; border:1px solid ${borderC}; margin-bottom:5px;"></div><div style="text-align:center; font-family:monospace; font-weight:bold;">${res.content}</div>`;
+            content = `<div style="width:100px; height:60px; background-color:${this.app.utils.escapeHtml(res.content)}; border-radius:4px; border:1px solid ${borderC}; margin-bottom:5px;"></div><div style="text-align:center; font-family:monospace; font-weight:bold;">${this.app.utils.escapeHtml(res.content)}</div>`;
         }
-        else if (res.type === 'audio') content = `<audio controls src="${res.content}" style="width:250px;"></audio>`;
+        else if (res.type === 'audio') {
+            content = this.app.utils.isSafeUrl(res.content) ? `<audio controls src="${res.content}" style="width:250px;"></audio>` : '不安全的音频来源';
+        }
         else if (res.type === 'link') {
             const linkSub = isDark ? '#a1a1aa' : '#555';
-            content = `<div style="font-size:12px; color:${linkSub}; margin-bottom:8px; word-break:break-all;">${this.app.utils.escapeHtml(res.content)}</div><a href="${res.content}" target="_blank" style="display:block; text-align:center; background:#667eea; color:white; text-decoration:none; padding:6px; border-radius:4px; font-size:12px;">跳转到链接 🔗</a>`;
+            const safeUrl = this.app.utils.isSafeUrl(res.content) ? res.content : '#';
+            content = `<div style="font-size:12px; color:${linkSub}; margin-bottom:8px; word-break:break-all;">${this.app.utils.escapeHtml(res.content)}</div><a href="${safeUrl}" target="_blank" style="display:block; text-align:center; background:#667eea; color:white; text-decoration:none; padding:6px; border-radius:4px; font-size:12px;">跳转到链接 🔗</a>`;
         }
 
         this.tooltipEl.innerHTML = content;

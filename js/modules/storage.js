@@ -33,7 +33,7 @@ export class StorageModule {
     }
 
     async createProject(name) {
-        const id = 'proj_' + Date.now();
+        const id = this.app.config.idPrefix.project + Date.now();
         const newProj = {
             id: id, name: name, created: Date.now(),
             nodes: [], links: [], resources: []
@@ -189,16 +189,29 @@ export class StorageModule {
             this.app.ui.updateSaveStatus('已保存 ' + new Date().toLocaleTimeString());
         } catch (e) {
             console.error(e);
-            this.app.ui.toast('保存失败: 空间不足或数据过大');
+            const msg = (e.name === 'QuotaExceededError') ? '保存失败: 浏览器存储空间已满，请删除部分项目' : '保存失败: ' + (e.message || '未知错误');
+            this.app.ui.toast(msg);
         }
     }
 
     async importExternalProject(projData) {
-        const newId = 'proj_' + Date.now() + '_imp';
+        // 校验导入数据结构
+        if (!projData || typeof projData !== 'object') throw new Error('项目数据无效');
+        const nodes = Array.isArray(projData.nodes) ? projData.nodes : [];
+        const links = Array.isArray(projData.links) ? projData.links : [];
+        const resources = Array.isArray(projData.resources) ? projData.resources : [];
+        // 限制资源内容大小（单个 10MB）
+        const MAX_RES_SIZE = 10 * 1024 * 1024;
+        for (const r of resources) {
+            if (r && typeof r.content === 'string' && r.content.length > MAX_RES_SIZE) {
+                throw new Error(`资源 "${r.name || r.id}" 内容超过 10MB 限制`);
+            }
+        }
+        const newId = this.app.config.idPrefix.project + Date.now() + '_imp';
         const newName = (projData.name || '未命名') + ' (导入)';
         const newProj = {
             id: newId, name: newName, created: Date.now(),
-            nodes: projData.nodes || [], links: projData.links || [], resources: projData.resources || [],
+            nodes, links, resources,
             camera: projData.camera || null
         };
         await localforage.setItem(newId, newProj);
@@ -292,7 +305,7 @@ export class StorageModule {
         reader.onload = async (e) => {
             try {
                 const json = JSON.parse(e.target.result);
-                if (!json.project) throw new Error('无效的项目文件');
+                if (!json.project || typeof json.project !== 'object') throw new Error('无效的项目文件');
                 const newId = await this.importExternalProject(json.project);
                 await this.loadProject(newId);
             } catch (err) {
@@ -330,7 +343,7 @@ export class StorageModule {
     async duplicateProject(id) {
         const proj = await localforage.getItem(id);
         if (!proj) return this.app.ui.toast('无法复制：找不到项目数据');
-        const newId = 'proj_' + Date.now() + '_dup';
+        const newId = this.app.config.idPrefix.project + Date.now() + '_dup';
         const newName = proj.name + ' (副本)';
         const newProj = { ...proj, id: newId, name: newName, created: Date.now() };
         await localforage.setItem(newId, newProj);

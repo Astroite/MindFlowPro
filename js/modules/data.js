@@ -17,7 +17,7 @@ export class DataModule {
     _createResourceObject(data) {
         const timestamp = Date.now();
         return {
-            id: data.id || `res_${timestamp}_${Math.random().toString(36).substr(2, 9)}`,
+            id: data.id || `${this.app.config.idPrefix.resource}${timestamp}_${Math.random().toString(36).substr(2, 9)}`,
             // @ts-ignore
             type: data.type || 'unknown',
             name: data.name || '未命名资源',
@@ -34,7 +34,7 @@ export class DataModule {
         let fixedCount = 0;
         this.app.state.resources = this.app.state.resources.map(res => {
             if (!res.id) {
-                res.id = `res_${Date.now()}_fix_${Math.random().toString(36).substr(2, 5)}`;
+                res.id = `${this.app.config.idPrefix.resource}${Date.now()}_fix_${Math.random().toString(36).substr(2, 5)}`;
                 fixedCount++;
             }
             if (res.parentId === undefined) {
@@ -66,7 +66,7 @@ export class DataModule {
             }))
         });
         this.app.state.undoStack.push(snap);
-        if (this.app.state.undoStack.length > 50) this.app.state.undoStack.shift();
+        if (this.app.state.undoStack.length > this.app.config.undoLimit) this.app.state.undoStack.shift();
         this.app.state.redoStack = []; // clear redo on new action
     }
 
@@ -116,7 +116,7 @@ export class DataModule {
         const folder = this._createResourceObject({
             type: 'folder',
             name: name,
-            id: 'folder_' + Date.now(),
+            id: this.app.config.idPrefix.folder + Date.now(),
             parentId
         });
         this.app.state.resources.push(folder);
@@ -239,7 +239,7 @@ export class DataModule {
         const node = this.app.state.nodes.find(n => n.id === nodeId);
         if (node) {
             if (data.label !== undefined) node.label = data.label;
-            if (data.resId !== undefined) node.resId = data.resId;
+            if (data.resId !== undefined) { node.resId = data.resId; this.app.graph.preloadImage(data.resId); }
             if (data.color !== undefined) node.color = data.color;
             if (data.note !== undefined) node.note = data.note;
             if (data.shape !== undefined) node.shape = data.shape;
@@ -374,7 +374,10 @@ export class DataModule {
     }
 
     // [P0-5] Paste clipboard nodes at offset position
-    pasteNodes(offsetX = 30, offsetY = 30) {
+    pasteNodes(offsetX, offsetY) {
+        const off = this.app.config.pasteOffset;
+        if (offsetX === undefined) offsetX = off;
+        if (offsetY === undefined) offsetY = off;
         if (!this._clipboard || this._clipboard.length === 0) {
             return this.app.eventBus.emit('toast', { msg: '剪贴板为空' });
         }
@@ -384,7 +387,7 @@ export class DataModule {
         // Generate new IDs for pasted nodes
         const idMap = {};
         const newNodes = this._clipboard.map(n => {
-            const newId = 'n_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+            const newId = this.app.config.idPrefix.node + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
             idMap[n.id] = newId;
             return {
                 id: newId, type: n.type, label: n.label || '未命名',

@@ -17,6 +17,8 @@ export class EventBus {
 
     emit(event, data) {
         if (!this.listeners[event]) return;
-        this.listeners[event].forEach(callback => callback(data));
+        this.listeners[event].forEach(callback => {
+            try { callback(data); } catch (e) { console.error(`[EventBus] ${event}:`, e); }
+        });
     }
 }

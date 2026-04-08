@@ -32,6 +32,13 @@ export const utils = {
             .replace(/'/g, "&#039;");
     },
 
+    // URL scheme 白名单校验，防止 javascript: 注入
+    isSafeUrl(url) {
+        if (typeof url !== 'string') return false;
+        const trimmed = url.trim().toLowerCase();
+        return trimmed.startsWith('https:') || trimmed.startsWith('data:image/') || trimmed.startsWith('blob:');
+    },
+
     // 图片压缩：限制最大宽高，转换为 JPEG
     compressImage: (base64Str, maxWidth = 1024, quality = 0.8) => {
         return new Promise((resolve) => {

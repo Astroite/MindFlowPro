@@ -71,7 +71,7 @@ export class GraphModule {
                 this.resetCamera();
             }
             if (this.app.state.simulation) {
-                this.app.state.simulation.alpha(0.3).restart();
+                this.app.state.simulation.alpha(config.alphaTarget).restart();
             }
         }
     }
@@ -227,6 +227,9 @@ export class GraphModule {
     // [Feature 2] Text wrapping helper
     wrapText(ctx, text, maxWidth, maxLines = 2) {
         if (!text) return [''];
+        const font = ctx.font;
+        const cacheKey = `${text}|${maxWidth.toFixed(1)}|${maxLines}|${font}`;
+        if (this._wrapCache && this._wrapCache.key === cacheKey) return this._wrapCache.lines;
         const lines = [];
         let remaining = text;
         while (remaining.length > 0 && lines.length < maxLines) {
@@ -246,7 +249,9 @@ export class GraphModule {
                 remaining = isLast ? '' : remaining.slice(lo);
             }
         }
-        return lines.length > 0 ? lines : [''];
+        const result = lines.length > 0 ? lines : [''];
+        this._wrapCache = { key: cacheKey, lines: result };
+        return result;
     }
 
     // --- Node appearance system ---
@@ -257,7 +262,7 @@ export class GraphModule {
     drawNodeShape(ctx, cx, cy, r, shape) {
         ctx.beginPath();
         if (shape === 'rounded-rect') {
-            ctx.roundRect(cx - r, cy - r, r * 2, r * 2, r * 0.35);
+            ctx.roundRect(cx - r, cy - r, r * 2, r * 2, r * config.cornerRatio);
         } else {
             ctx.arc(cx, cy, r, 0, Math.PI * 2);
         }
@@ -382,10 +387,7 @@ export class GraphModule {
                 this.drawImageInNode(ctx, n, res, r, shape);
             }
             else if (res.type !== 'color') {
-                let icon = '🔗';
-                if (res.type === 'md') icon = '📝';
-                else if (res.type === 'code') icon = '💻';
-                else if (res.type === 'audio') icon = '🎵';
+                const icon = config.resIcons[res.type] || '🔗';
 
                 ctx.fillStyle = (n.type === 'root') ? 'rgba(255,255,255,0.9)' : '#f59e0b';
 
@@ -461,8 +463,8 @@ export class GraphModule {
 
         // [Feature 7] Note indicator — amber dot at upper-left of node
         if (n.note && n.scale >= 0.9) {
-            const noteX = n.x - r * 0.707;
-            const noteY = n.y - r * 0.707;
+            const noteX = n.x - r * config.diagOffset;
+            const noteY = n.y - r * config.diagOffset;
             ctx.beginPath();
             ctx.arc(noteX, noteY, 5, 0, Math.PI * 2);
             ctx.fillStyle = '#f59e0b';
@@ -543,12 +545,7 @@ export class GraphModule {
 
         // Determine resource icon
         let icon = '';
-        if (res) {
-            if (res.type === 'md') icon = '📝';
-            else if (res.type === 'code') icon = '💻';
-            else if (res.type === 'audio') icon = '🎵';
-            else if (res.type === 'link') icon = '🔗';
-        }
+        if (res) { icon = config.resIcons[res.type] || ''; }
 
         // Shadow
         ctx.shadowColor = 'rgba(0,0,0,0.1)';
@@ -586,9 +583,10 @@ export class GraphModule {
             ctx.beginPath();
             ctx.roundRect(x, y, w, imgH, [cornerR, cornerR, 0, 0]);
             ctx.clip();
-            if (!this.imageCache.has(res.id)) {
+            if (!this.imageCache.has(res.id) && this.app.utils.isSafeUrl(res.content)) {
                 const img = new Image(); img.src = res.content;
                 img.onload = () => this.imageCache.set(res.id, img);
+                img.onerror = () => { this.imageCache.set(res.id, 'error'); };
                 this.imageCache.set(res.id, 'loading');
             }
             const img = this.imageCache.get(res.id);
@@ -702,8 +700,8 @@ export class GraphModule {
     drawPlusButton(ctx, n) {
         if (n.scale >= 0.9) {
             const r = (n.type === 'root' ? config.nodeRadius : config.subRadius) * n.scale;
-            const btnX = n.x + r * 0.707;
-            const btnY = n.y + r * 0.707;
+            const btnX = n.x + r * config.diagOffset;
+            const btnY = n.y + r * config.diagOffset;
             ctx.beginPath();
             ctx.arc(btnX, btnY, 9, 0, Math.PI * 2);
             ctx.fillStyle = '#22c55e';
@@ -839,13 +837,16 @@ export class GraphModule {
         const linkColor = isDark && config.colorsDark ? config.colorsDark.link : config.colors.link;
         ctx.lineWidth = 1.5;
 
+        // Build node lookup map for O(1) access
+        const nodeMap = new Map(this.app.state.nodes.map(n => [n.id, n]));
+
         // 绘制连线
         this.app.state.links.forEach(l => {
-            const s = l.source.id ? l.source : this.app.state.nodes.find(n => n.id === l.source);
-            const t = l.target.id ? l.target : this.app.state.nodes.find(n => n.id === l.target);
+            const s = l.source.id ? l.source : nodeMap.get(l.source);
+            const t = l.target.id ? l.target : nodeMap.get(l.target);
 
             if (s && t && !isNaN(s.x) && !isNaN(s.y) && !isNaN(t.x) && !isNaN(t.y)) {
-                if (this.isNodeVisible(s, 500) || this.isNodeVisible(t, 500)) {
+                if (this.isNodeVisible(s, config.visPadding) || this.isNodeVisible(t, config.visPadding)) {
                     if (typeof l.source === 'object' && typeof l.target === 'object') {
                         ctx.strokeStyle = linkColor;
                         this.drawLink(ctx, l);
@@ -1009,7 +1010,8 @@ export class GraphModule {
         const ox=-minX+pad, oy=-minY+pad;
         const isDark = document.body.getAttribute('data-theme')==='dark';
         const colors = isDark ? config.colorsDark : config.colors;
-        const escX = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        const escX = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+        const safeColor = c => (/^#[0-9a-fA-F]{3,8}$/.test(c) || /^rgba?\([\d\s.,/%]+\)$/.test(c)) ? c : '#888';
         const parts = [];
         // Links
         this.app.state.links.forEach(l => {
@@ -1039,8 +1041,8 @@ export class GraphModule {
             const nx=n.x+ox, ny=n.y+oy;
             const r=n.type==='root'?config.nodeRadius:config.subRadius;
             const res = n.resId ? this.app.state.resources.find(r=>r.id===n.resId) : null;
-            let fill = n.type==='root' ? (n.color||colors.primary) : colors.surface;
-            if (res&&res.type==='color') fill=res.content;
+            let fill = n.type==='root' ? safeColor(n.color||colors.primary) : colors.surface;
+            if (res&&res.type==='color') fill=safeColor(res.content);
             const stroke = n.type==='root' ? 'rgba(255,255,255,0.2)' : colors.outline;
             const sw = n.type==='root' ? 2 : 1.5;
             const shape = n.shape || 'circle';
@@ -1051,11 +1053,10 @@ export class GraphModule {
             }
             // Resource icon
             if (res&&res.type!=='color'&&res.type!=='image') {
-                const icons={md:'📝',code:'💻',audio:'🎵',link:'🔗'};
-                parts.push(`<text x="${nx}" y="${ny}" text-anchor="middle" dominant-baseline="middle" font-size="${n.type==='root'?32:22}">${icons[res.type]||'🔗'}</text>`);
+                parts.push(`<text x="${nx}" y="${ny}" text-anchor="middle" dominant-baseline="middle" font-size="${n.type==='root'?32:22}">${config.resIcons[res.type]||'🔗'}</text>`);
             }
             // Note dot
-            if (n.note) parts.push(`<circle cx="${nx-r*0.707}" cy="${ny-r*0.707}" r="5" fill="#f59e0b"/>`);
+            if (n.note) parts.push(`<circle cx="${nx-r*config.diagOffset}" cy="${ny-r*config.diagOffset}" r="5" fill="#f59e0b"/>`);
             // Label - wrap manually for SVG (approximation: 7px per char)
             const label = n.label||'';
             const maxW = r*4;
@@ -1069,7 +1070,8 @@ export class GraphModule {
             if (line2) parts.push(`<text x="${nx}" y="${textY+14}" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="12" font-weight="${fw}" fill="${tc}">${escX(line2)}</text>`);
         });
         const bg=isDark?'#18181b':'#f3f3f3';
-        const svg=`<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">\n<rect width="${w}" height="${h}" fill="${bg}"/>\n${parts.join('\n')}\n</svg>`;
+        let svg=`<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">\n<rect width="${w}" height="${h}" fill="${bg}"/>\n${parts.join('\n')}\n</svg>`;
+        svg = this.app.utils.purifyHTML(svg);
         const blob=new Blob([svg],{type:'image/svg+xml'});
         const url=URL.createObjectURL(blob);
         const a=document.createElement('a'); a.download=`MindFlow_${Date.now()}.svg`; a.href=url; a.click();
@@ -1077,10 +1079,22 @@ export class GraphModule {
         this.app.ui.toast('SVG 已导出');
     }
 
+    // Preload an image resource into the cache (called when resId is assigned)
+    preloadImage(resId) {
+        const res = this.app.state.resources.find(r => r.id === resId);
+        if (!res || res.type !== 'image' || this.imageCache.has(res.id)) return;
+        if (!this.app.utils.isSafeUrl(res.content)) return;
+        const img = new Image(); img.src = res.content;
+        img.onload = () => { this.imageCache.set(res.id, img); this.needsRender = true; };
+        img.onerror = () => { this.imageCache.set(res.id, 'error'); };
+        this.imageCache.set(res.id, 'loading');
+    }
+
     drawImageInNode(ctx, node, res, r, shape) {
-        if (!this.imageCache.has(res.id)) {
+        if (!this.imageCache.has(res.id) && this.app.utils.isSafeUrl(res.content)) {
             const img = new Image(); img.src = res.content;
             img.onload = () => this.imageCache.set(res.id, img);
+            img.onerror = () => { this.imageCache.set(res.id, 'error'); };
             this.imageCache.set(res.id, 'loading');
         }
         const img = this.imageCache.get(res.id);
@@ -1100,7 +1114,7 @@ export class GraphModule {
         const cam = this.app.state.camera;
         const cx = (this.width / 2 - cam.x) / cam.k;
         const cy = (this.height / 2 - cam.y) / cam.k;
-        const node = { id: 'n_' + Date.now(), type: 'root', x: cx + (Math.random() - 0.5) * 50, y: cy + (Math.random() - 0.5) * 50, label: '新主题', scale: 0.1 };
+        const node = { id: config.idPrefix.node + Date.now(), type: 'root', x: cx + (Math.random() - 0.5) * 50, y: cy + (Math.random() - 0.5) * 50, label: '新主题', scale: 0.1 };
         this.app.state.nodes.push(node);
         this.app.state.selectedNodes.clear();
         this.app.state.selectedNodes.add(node.id);
@@ -1113,7 +1127,7 @@ export class GraphModule {
     addChildNode(parent) {
         this.app.data._snapshot();
         const angle = Math.random() * Math.PI * 2;
-        const node = { id: 'n_' + Date.now(), type: 'sub', x: parent.x + Math.cos(angle) * 10, y: parent.y + Math.sin(angle) * 10, label: '新节点', scale: 0.05 };
+        const node = { id: config.idPrefix.node + Date.now(), type: 'sub', x: parent.x + Math.cos(angle) * 10, y: parent.y + Math.sin(angle) * 10, label: '新节点', scale: 0.05 };
         this.app.state.nodes.push(node);
         this.app.state.links.push({ source: parent.id, target: node.id });
         this.app.state.selectedNodes.clear();
@@ -1247,6 +1261,7 @@ export class GraphModule {
             if (hitNode) {
                 this.app.data._snapshot();
                 hitNode.resId = resId;
+                this.preloadImage(resId);
                 this.app.ui.toast('资源已关联');
                 this.app.storage.triggerSave();
                 this.app.graph.needsRender = true;
@@ -1256,11 +1271,12 @@ export class GraphModule {
                 if (!res || res.type === 'folder') return;
                 this.app.data._snapshot();
                 const node = {
-                    id: 'n_' + Date.now(), type: 'root',
+                    id: config.idPrefix.node + Date.now(), type: 'root',
                     x: m.x + (Math.random()-0.5)*20, y: m.y + (Math.random()-0.5)*20,
                     label: res.name, scale: 0.1, resId
                 };
                 this.app.state.nodes.push(node);
+                this.preloadImage(resId);
                 this.app.state.selectedNodes.clear();
                 this.app.state.selectedNodes.add(node.id);
                 this.app.ui.showNodeBubble(node);
@@ -1318,7 +1334,7 @@ export class GraphModule {
             for (let i = this.app.state.nodes.length - 1; i >= 0; i--) {
                 const n = this.app.state.nodes[i];
                 const r = (n.type === 'root' ? config.nodeRadius : config.subRadius) * (n.scale || 1);
-                if (!this.app.state.isLinking && Math.hypot(m.x - (n.x + r*0.707), m.y - (n.y + r*0.707)) < 15) {
+                if (!this.app.state.isLinking && Math.hypot(m.x - (n.x + r*config.diagOffset), m.y - (n.y + r*config.diagOffset)) < config.hitRadius) {
                     this.addChildNode(n); return;
                 }
                 if (n.layout==='card' ? this.hitTestCard(m.x, m.y, n) : this.hitTestNode(m.x, m.y, n)) { hitNode = n; break; }
@@ -1362,7 +1378,7 @@ export class GraphModule {
                 if (this.dragSubject) {
                     this.dragSubject.fx = this.dragSubject.x;
                     this.dragSubject.fy = this.dragSubject.y;
-                    this.app.state.simulation.alphaTarget(0.3).restart();
+                    this.app.state.simulation.alphaTarget(config.alphaTarget).restart();
                 }
             } else {
                 // [New] 尝试选中飞线
@@ -1380,14 +1396,14 @@ export class GraphModule {
                     this.app.state.selectedNodes.clear();
                     this.app.ui.hideNodeBubble();
                 }
-                // [P1-2] Shift+drag to pan, plain drag to box-select
+                // [P1-2] Plain drag to pan, Shift+drag to box-select
                 if (e.shiftKey) {
-                    this.isPanning = true;
-                    this.startPan = { x: m.rawX, y: m.rawY };
-                } else {
                     this.isSelecting = true;
                     const rect = canvas.getBoundingClientRect();
                     this.selectionRect = { startX: m.rawX - rect.left, startY: m.rawY - rect.top, endX: m.rawX - rect.left, endY: m.rawY - rect.top };
+                } else {
+                    this.isPanning = true;
+                    this.startPan = { x: m.rawX, y: m.rawY };
                 }
             }
         };
@@ -1401,7 +1417,7 @@ export class GraphModule {
                 const dy = e.touches[0].clientY - e.touches[1].clientY;
                 const dist = Math.hypot(dx, dy);
                 let newScale = this.pinchStartScale * (dist / this.pinchStartDist);
-                this.app.state.camera.k = Math.max(0.1, Math.min(5, newScale));
+                this.app.state.camera.k = Math.max(config.camZoomMin, Math.min(config.camZoomMax, newScale));
                 e.preventDefault(); return;
             }
 
@@ -1523,8 +1539,8 @@ export class GraphModule {
             this.needsRender = true;
             this.app.dom.nodeMenu.style.display = 'none';
             this.app.ui.hideNodeBubble();
-            e.preventDefault(); const f = e.deltaY < 0 ? 1.1 : 0.9;
-            this.app.state.camera.k = Math.max(0.1, Math.min(5, this.app.state.camera.k * f));
+            e.preventDefault(); const f = e.deltaY < 0 ? config.zoomInFactor : config.zoomOutFactor;
+            this.app.state.camera.k = Math.max(config.camZoomMin, Math.min(config.camZoomMax, this.app.state.camera.k * f));
         });
     }
 }
