@@ -10,10 +10,10 @@
 
     <script type="module" src="js/app.js"></script>
 
-    <script src="js/lib/d3.v7.min.js"></script>
-    <script src="js/lib/localforage.min.js"></script>
-    <script src="js/lib/marked.min.js"></script>
-    <script src="js/lib/purify.min.js"></script>
+    <script defer src="js/lib/d3.v7.min.js"></script>
+    <script defer src="js/lib/localforage.min.js"></script>
+    <script defer src="js/lib/marked.min.js"></script>
+    <script defer src="js/lib/purify.min.js"></script>
 </head>
 <body>
 
@@ -40,10 +40,10 @@
                     </select>
                 </div>
                 <div class="btn-group-mini">
-                    <button class="btn-icon" title="导出到本地磁盘" onclick="app.storage.triggerSaveDisk()">💾</button>
-                    <button class="btn-icon" title="从磁盘打开项目" onclick="app.storage.triggerOpenDisk()">📂</button>
-                    <button class="btn-icon" title="复制当前项目" onclick="app.ui.duplicateCurrentProject()">📋</button>
-                    <button class="btn-icon danger" title="删除当前项目" onclick="app.ui.confirmDeleteProject()">🗑️</button>
+                    <button class="btn-icon" data-action="saveDisk" title="导出到本地磁盘">💾</button>
+                    <button class="btn-icon" data-action="openDisk" title="从磁盘打开项目">📂</button>
+                    <button class="btn-icon" data-action="duplicateProject" title="复制当前项目">📋</button>
+                    <button class="btn-icon danger" data-action="deleteProject" title="删除当前项目">🗑️</button>
                 </div>
             </div>
         </div>
@@ -56,48 +56,48 @@
         </div>
 
         <div class="sidebar-footer" id="sidebarFooter">
-            <button class="btn-secondary" style="flex:1;" onclick="app.ui.handleCreateFolder()" title="新建文件夹">📁</button>
-            <button class="btn-primary" style="flex:3;" onclick="app.ui.openResModal()">+ 添加资源</button>
-            <button class="btn-secondary" style="flex:1;" onclick="app.ui.toggleBatchMode()" title="批量管理">☑️</button>
+            <button class="btn-secondary" style="flex:1;" data-action="createFolder" title="新建文件夹">📁</button>
+            <button class="btn-primary" style="flex:3;" data-action="openResModal">+ 添加资源</button>
+            <button class="btn-secondary" style="flex:1;" data-action="toggleBatchMode" title="批量管理">☑️</button>
         </div>
         <div class="batch-bar" id="batchBar" style="display:none;">
             <span id="batchCount">已选 0 项</span>
             <select id="batchFolderSelect" class="batch-folder-select"><option value="">移到...</option></select>
-            <button class="btn-secondary batch-action-btn" onclick="app.ui.batchMoveToFolder()">📂 移动</button>
-            <button class="btn-danger batch-action-btn" onclick="app.ui.batchDelete()">🗑️ 删除</button>
-            <button class="btn-secondary batch-action-btn" onclick="app.ui.toggleBatchMode()">取消</button>
+            <button class="btn-secondary batch-action-btn" data-action="batchMove">📂 移动</button>
+            <button class="btn-danger batch-action-btn" data-action="batchDelete">🗑️ 删除</button>
+            <button class="btn-secondary batch-action-btn" data-action="toggleBatchMode">取消</button>
         </div>
     </div>
 
     <div class="main-area">
         <div class="toolbar">
             <div class="toolbar-left">
-                <button class="tool-btn" onclick="app.ui.toggleSidebar()" title="菜单">☰</button>
-                <button class="tool-btn primary" onclick="app.graph.addRootNode()" title="添加根节点"><span>+ 根节点</span></button>
+                <button class="tool-btn" data-action="toggleSidebar" title="菜单" aria-label="切换侧边栏">☰</button>
+                <button class="tool-btn primary" data-action="addRootNode" title="添加根节点" aria-label="添加根节点"><span>+ 根节点</span></button>
             </div>
             <div class="toolbar-center">
-                <input type="text" id="projTitleInput" class="project-title-input" placeholder="未命名项目" onchange="app.data.renameProject(this.value)" title="点击重命名项目">
+                <input type="text" id="projTitleInput" class="project-title-input" placeholder="未命名项目" data-action="renameProject" title="点击重命名项目" aria-label="项目名称">
             </div>
             <div class="toolbar-right">
-                <button class="tool-btn" onclick="app.graph.resetCamera()" title="视图归位 (双击画布)">🔎</button>
+                <button class="tool-btn" data-action="resetCamera" title="视图归位 (双击画布)" aria-label="视图归位">🔎</button>
                 <div class="export-dropdown">
-                    <button class="tool-btn" onclick="app.ui.toggleExportMenu()" title="导出">📤 <span class="dropdown-arrow">▾</span></button>
+                    <button class="tool-btn" data-action="toggleExportMenu" title="导出" aria-label="导出">📤 <span class="dropdown-arrow">▾</span></button>
                     <div class="export-menu" id="exportMenu">
-                        <button onclick="app.ui.exportImage(); app.ui.closeExportMenu()">📷 导出 PNG</button>
-                        <button onclick="app.graph.exportSVG(); app.ui.closeExportMenu()">📐 导出 SVG</button>
+                        <button data-action="exportPng">📷 导出 PNG</button>
+                        <button data-action="exportSvg">📐 导出 SVG</button>
                     </div>
                 </div>
-                <button class="tool-btn" id="btnToggleMinimap" onclick="app.ui.toggleMinimap()" title="小地图">🗺️</button>
-                <button class="tool-btn" onclick="app.ui.toggleTheme()" title="切换主题">🌗</button>
-                <button class="tool-btn" onclick="app.ui.toggleNodeSearch()" title="搜索节点">🔍</button>
-                <button class="tool-btn" onclick="document.getElementById('shortcutsModal').style.display='flex'" title="快捷键">⌨️</button>
+                <button class="tool-btn" id="btnToggleMinimap" data-action="toggleMinimap" title="小地图" aria-label="小地图">🗺️</button>
+                <button class="tool-btn" data-action="toggleTheme" title="切换主题" aria-label="切换主题">🌗</button>
+                <button class="tool-btn" data-action="toggleNodeSearch" title="搜索节点" aria-label="搜索节点">🔍</button>
+                <button class="tool-btn" data-action="openShortcuts" title="快捷键" aria-label="快捷键">⌨️</button>
             </div>
             <div class="node-search-bar" id="nodeSearchBar" style="display:none;">
                 <input type="text" id="nodeSearchInput" class="node-search-input" placeholder="搜索节点..." oninput="app.ui.searchNodes(this.value)">
                 <span id="nodeSearchCount" class="node-search-count"></span>
-                <button class="node-search-btn" onclick="app.ui.nodeSearchPrev()" title="上一个">▲</button>
-                <button class="node-search-btn" onclick="app.ui.nodeSearchNext()" title="下一个">▼</button>
-                <button class="node-search-btn" onclick="app.ui.toggleNodeSearch()" title="关闭">✕</button>
+                <button class="node-search-btn" data-action="nodeSearchPrev" title="上一个">▲</button>
+                <button class="node-search-btn" data-action="nodeSearchNext" title="下一个">▼</button>
+                <button class="node-search-btn" data-action="toggleNodeSearch" title="关闭">✕</button>
             </div>
         </div>
 
@@ -110,20 +110,20 @@
 </div>
 
 <div id="nodeBubble" class="node-bubble-container" style="display: none;">
-    <button class="bubble-btn action-edit" onclick="app.ui.onBubbleEdit()" title="编辑节点">
+    <button class="bubble-btn action-edit" data-action="bubbleEdit" title="编辑节点">
         <span style="font-size: 16px;">✏️</span>
     </button>
     <!-- [New] 飞线按钮 -->
-    <button class="bubble-btn action-link" onclick="app.ui.onBubbleLink()" title="创建连线">
+    <button class="bubble-btn action-link" data-action="bubbleLink" title="创建连线">
         <span style="font-size: 16px;">🪡</span>
     </button>
-    <button class="bubble-btn action-delete" onclick="app.ui.onBubbleDelete()" title="删除节点">
+    <button class="bubble-btn action-delete" data-action="bubbleDelete" title="删除节点">
         <span style="font-size: 16px;">🗑️</span>
     </button>
 </div>
 
 <!-- [新增] 通用单行输入弹窗 -->
-<div class="modal-overlay" id="inputModal" style="display: none;">
+<div class="modal-overlay" id="inputModal" role="dialog" aria-modal="true" aria-label="输入对话框" style="display: none;">
     <div class="modal-box" style="width: 360px;">
         <h3 id="inputModalTitle">输入</h3>
         <div class="form-group" style="margin-top: 20px;">
@@ -137,11 +137,11 @@
 </div>
 
 <!-- [修改] 现代化资源添加/编辑弹窗 -->
-<div class="modal-overlay" id="resModal" style="display: none;">
+<div class="modal-overlay" id="resModal" role="dialog" aria-modal="true" aria-label="资源编辑" style="display: none;">
     <div class="modern-modal">
         <div class="panel-header">
             <h3 id="resModalTitle">✨ 添加资源</h3>
-            <button class="close-btn" onclick="app.ui.closeModal('resModal')">×</button>
+            <button class="close-btn" aria-label="关闭" data-action="closeModal" data-modal="resModal">×</button>
         </div>
 
         <div class="panel-body">
@@ -202,8 +202,8 @@
         </div>
 
         <div class="panel-footer">
-            <button class="btn-secondary" onclick="app.ui.closeModal('resModal')">取消</button>
-            <button class="btn-primary" onclick="app.ui.handleSaveResourceClick()">保存资源</button>
+            <button class="btn-secondary" data-action="closeModal" data-modal="resModal">取消</button>
+            <button class="btn-primary" data-action="saveResource">保存资源</button>
         </div>
     </div>
 </div>
@@ -211,7 +211,7 @@
 <div class="node-menu modern-panel" id="nodeMenu" style="display: none;">
     <div class="panel-header">
         <h3>编辑节点</h3>
-        <button class="close-btn" onclick="document.getElementById('nodeMenu').style.display='none'">×</button>
+        <button class="close-btn" aria-label="关闭" data-action="closeNodeMenu">×</button>
     </div>
 
     <div class="panel-body">
@@ -287,7 +287,7 @@
     </div>
 
     <div class="panel-footer">
-        <button class="btn-primary full-width" onclick="app.ui.handleSaveNodeEdit()">保存</button>
+        <button class="btn-primary full-width" data-action="saveNodeEdit">保存</button>
     </div>
 </div>
 
@@ -297,11 +297,11 @@
 <input type="text" id="inlineEditInput" class="inline-edit-input" style="display:none;">
 
 <!-- [P2-3] Keyboard shortcuts help modal -->
-<div class="modal-overlay" id="shortcutsModal" style="display:none;">
+<div class="modal-overlay" id="shortcutsModal" role="dialog" aria-modal="true" aria-label="快捷键帮助" style="display:none;">
     <div class="modern-modal" style="max-width:480px;">
         <div class="panel-header">
             <h3>⌨️ 快捷键</h3>
-            <button class="close-btn" onclick="app.ui.closeModal('shortcutsModal')">×</button>
+            <button class="close-btn" aria-label="关闭" data-action="closeModal" data-modal="shortcutsModal">×</button>
         </div>
         <div class="panel-body" style="max-height:60vh;overflow-y:auto;">
             <table class="shortcuts-table">
@@ -327,11 +327,11 @@
 </div>
 
 <!-- [Feature 3] Full-screen resource viewer modal -->
-<div class="modal-overlay" id="viewerModal" style="display:none;">
+<div class="modal-overlay" id="viewerModal" role="dialog" aria-modal="true" aria-label="资源查看" style="display:none;">
     <div class="viewer-modal">
         <div class="panel-header">
             <h3 id="viewerTitle">📄 资源查看</h3>
-            <button class="close-btn" onclick="app.ui.closeModal('viewerModal')">×</button>
+            <button class="close-btn" aria-label="关闭" data-action="closeModal" data-modal="viewerModal">×</button>
         </div>
         <div id="viewerContent" class="viewer-content"></div>
     </div>
