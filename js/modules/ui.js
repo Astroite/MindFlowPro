@@ -1,4 +1,7 @@
 import { config } from '../config.js';
+import { TooltipManager } from './ui/TooltipManager.js';
+import { NodeEditor } from './ui/NodeEditor.js';
+import { NodeSearch } from './ui/NodeSearch.js';
 
 export class UIModule {
     /**
@@ -6,56 +9,52 @@ export class UIModule {
      */
     constructor(app) {
         this.app = app;
-        this.tooltipEl = null;
         this._promptResolve = null;
         this._promptMode = 'input'; // 'input' | 'confirm'
+
+        // Sub-modules
+        this.tooltipManager = new TooltipManager(app);
+        this.nodeEditor = new NodeEditor(app);
+        this.nodeSearch = new NodeSearch(app);
     }
 
     init() {
-        this.initTooltip();
+        this.tooltipManager.initTooltip();
         this.bindGlobalEvents();
         this.setupInputModal();
-        this.setupShapeLayoutButtons();
+        this.nodeEditor.setupShapeLayoutButtons();
 
         this.app.eventBus.on('resources:updated', () => this.renderResourceTree());
         this.app.eventBus.on('nodes:deleted', () => {
             this.app.state.selectedNodes.clear();
             this.app.state.bubbleNode = null;
             this.app.state.editingNode = null;
-            this.hideNodeBubble();
+            this.nodeEditor.hideNodeBubble();
         });
         this.app.eventBus.on('toast', (data) => this.toast(data.msg, data.type));
     }
 
-    initTooltip() {
-        this.tooltipEl = document.createElement('div');
-        this.tooltipEl.className = 'mindflow-tooltip';
-        Object.assign(this.tooltipEl.style, {
-            position: 'fixed', display: 'none', zIndex: '1000',
-            borderRadius: '6px',
-            padding: '10px', boxShadow: '0 4px 15px rgba(0,0,0,0.1)',
-            maxWidth: '300px', maxHeight: '300px', overflow: 'hidden', pointerEvents: 'auto'
-        });
-        document.body.appendChild(this.tooltipEl);
-        this.tooltipEl.addEventListener('mouseenter', () => clearTimeout(this.app.state.tooltipTimer));
-        this.tooltipEl.addEventListener('mouseleave', () => this.hideTooltip());
-        this._updateTooltipTheme();
-    }
+    // --- Delegate methods for external callers ---
 
-    // [P0-3] Update tooltip colors to match current theme
-    _updateTooltipTheme() {
-        if (!this.tooltipEl) return;
-        const isDark = document.body.getAttribute('data-theme') === 'dark';
-        if (isDark) {
-            this.tooltipEl.style.background = '#27272a';
-            this.tooltipEl.style.border = '1px solid #3f3f46';
-            this.tooltipEl.style.color = '#f3f4f6';
-        } else {
-            this.tooltipEl.style.background = '#ffffff';
-            this.tooltipEl.style.border = '1px solid #e2e8f0';
-            this.tooltipEl.style.color = '#1f2937';
-        }
-    }
+    showTooltip(node, x, y) { this.tooltipManager.showTooltip(node, x, y); }
+    hideTooltip() { this.tooltipManager.hideTooltip(); }
+    showSidebarPreview(resId, event) { this.tooltipManager.showSidebarPreview(resId, event); }
+
+    showNodeBubble(node) { this.nodeEditor.showNodeBubble(node); }
+    hideNodeBubble() { this.nodeEditor.hideNodeBubble(); }
+    updateBubblePosition() { this.nodeEditor.updateBubblePosition(); }
+    onBubbleEdit() { this.nodeEditor.onBubbleEdit(); }
+    onBubbleDelete() { return this.nodeEditor.onBubbleDelete(); }
+    onBubbleLink() { this.nodeEditor.onBubbleLink(); }
+    openNodeMenu(node, x, y) { this.nodeEditor.openNodeMenu(node, x, y); }
+    handleSaveNodeEdit() { this.nodeEditor.handleSaveNodeEdit(); }
+
+    toggleNodeSearch() { this.nodeSearch.toggleNodeSearch(); }
+    searchNodes(keyword) { this.nodeSearch.searchNodes(keyword); }
+    nodeSearchPrev() { this.nodeSearch.nodeSearchPrev(); }
+    nodeSearchNext() { this.nodeSearch.nodeSearchNext(); }
+
+    // --- Modal / Prompt system ---
 
     setupInputModal() {
         const confirmBtn = document.getElementById('inputModalConfirm');
@@ -98,56 +97,6 @@ export class UIModule {
         });
     }
 
-    setupShapeLayoutButtons() {
-        this._colorChanged = false;
-        this._colorReset = false;
-
-        // Shape buttons
-        document.querySelectorAll('.shape-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                document.querySelectorAll('.shape-btn').forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-            });
-        });
-        // Layout buttons — also toggle shape/ratio row
-        document.querySelectorAll('.layout-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                document.querySelectorAll('.layout-btn').forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-                const isCard = btn.dataset.layout === 'card';
-                document.getElementById('shapeOptions').style.display = isCard ? 'none' : 'flex';
-                document.getElementById('ratioOptions').style.display = isCard ? 'flex' : 'none';
-                document.getElementById('shapeRatioLabel').textContent = isCard ? '比例' : '形状';
-            });
-        });
-        // Texture buttons — mutually exclusive toggle (click active to deselect)
-        document.querySelectorAll('.texture-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const wasActive = btn.classList.contains('active');
-                document.querySelectorAll('.texture-btn').forEach(b => b.classList.remove('active'));
-                if (!wasActive) btn.classList.add('active');
-            });
-        });
-        // Ratio buttons
-        document.querySelectorAll('.ratio-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                document.querySelectorAll('.ratio-btn').forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-            });
-        });
-        // Color auto-enable on change
-        document.getElementById('nodeColor').addEventListener('input', () => {
-            this._colorChanged = true;
-            this._colorReset = false;
-        });
-        // Color reset button
-        document.getElementById('nodeColorReset').addEventListener('click', () => {
-            this._colorReset = true;
-            this._colorChanged = false;
-            document.getElementById('nodeColor').value = '#6366f1';
-        });
-    }
-
     promptUser(title, placeholder = '', defaultValue = '') {
         return new Promise((resolve) => {
             this._promptResolve = resolve;
@@ -172,6 +121,8 @@ export class UIModule {
         });
     }
 
+    // --- Global events ---
+
     bindGlobalEvents() {
         // Event delegation for data-action buttons
         document.addEventListener('click', (e) => {
@@ -193,7 +144,7 @@ export class UIModule {
                 resetCamera: () => this.app.graph.resetCamera(),
                 toggleExportMenu: () => this.toggleExportMenu(),
                 exportPng: () => { this.exportImage(); this.closeExportMenu(); },
-                exportSvg: () => { this.app.graph.exportSVG(); this.closeExportMenu(); },
+                exportSvg: () => { this.app.graph.exportManager.exportSVG(); this.closeExportMenu(); },
                 toggleMinimap: () => this.toggleMinimap(),
                 toggleTheme: () => this.toggleTheme(),
                 toggleNodeSearch: () => this.toggleNodeSearch(),
@@ -373,12 +324,13 @@ export class UIModule {
         h += `<option value="__new__" style="color:#667eea; font-weight:bold;">+ 新建项目</option>`;
         this.app.state.projectsIndex.forEach(p => {
             const isSelected = p.id === this.app.state.currentId ? 'selected' : '';
-            h += `<option value="${p.id}" ${isSelected}>📁 ${p.name}</option>`;
+            h += `<option value="${p.id}" ${isSelected}>  ${p.name}</option>`;
         });
         sel.innerHTML = h;
     }
 
-    // [Feature 6] Sub-folder support — full renderResourceTree rewrite
+    // --- Resource tree ---
+
     renderResourceTree() {
         const container = this.app.dom.resList;
         const resources = this.app.state.resources;
@@ -433,6 +385,7 @@ export class UIModule {
         const batchCb = batchMode ? `<input type="checkbox" class="batch-checkbox" id="batch-cb-${folder.id}" ${batchChecked?'checked':''} onclick="event.stopPropagation();app.ui.toggleBatchSelect('${folder.id}')">` : '';
         return `
             <div class="res-folder ${isOpen?'open':''} ${batchChecked?'batch-selected':''}" style="padding-left:${pl}px"
+                 aria-expanded="${isOpen}"
                  onclick="app.ui.toggleFolder('${folder.id}')"
                  oncontextmenu="event.preventDefault();app.ui.handleRenameFolder('${folder.id}')"
                  ondragover="app.ui.dragOver(event,'${folder.id}')"
@@ -443,9 +396,9 @@ export class UIModule {
                 <div class="res-info"><div class="res-name">${this.highlightText(folder.name, keyword)}</div></div>
                 <div class="res-actions">
                     <div class="btn-add-resource" onclick="event.stopPropagation();app.ui.openResModal('New',null,'${folder.id}')" title="在此文件夹添加资源">+</div>
-                    <div class="btn-res-action" onclick="event.stopPropagation();app.ui.handleCreateFolder('${folder.id}')" title="新建子文件夹">📁</div>
+                    <div class="btn-res-action" onclick="event.stopPropagation();app.ui.handleCreateFolder('${folder.id}')" title="新建子文件夹"> </div>
                     <div class="btn-res-action" onclick="event.stopPropagation();app.ui.handleRenameFolder('${folder.id}')" title="重命名">✎</div>
-                    <div class="btn-res-action del" onclick="event.stopPropagation();app.ui.handleDeleteResource('${folder.id}')" title="删除">🗑</div>
+                    <div class="btn-res-action del" onclick="event.stopPropagation();app.ui.handleDeleteResource('${folder.id}')" title="删除"> </div>
                 </div>
             </div>
             <div class="folder-children ${isOpen?'open':''}">${childHtml}</div>
@@ -454,9 +407,8 @@ export class UIModule {
 
     createResItemHtml(r, keyword) {
         let icon = '🔗';
-        if(r.type==='image') icon='🖼️'; else if(r.type==='md') icon='📝'; else if(r.type==='code') icon='💻'; else if(r.type==='color') icon='🎨'; else if(r.type==='audio') icon='🎤';
+        if(r.type==='image') icon='️'; else if(r.type==='md') icon=''; else if(r.type==='code') icon=''; else if(r.type==='color') icon=''; else if(r.type==='audio') icon='';
 
-        // [Feature 8] Tags
         const tagsHtml = r.tags && r.tags.length ? `<div class="res-tags">${r.tags.map(t=>`<span class="res-tag">${this.app.utils.escapeHtml(t)}</span>`).join('')}</div>` : '';
 
         const batchMode = this.app.state._batchMode;
@@ -477,7 +429,7 @@ export class UIModule {
                 </div>
                 <div class="res-actions">
                     <div class="btn-res-action" onclick="app.ui.handleEditResource('${r.id}')" title="编辑">✎</div>
-                    <div class="btn-res-action del" onclick="app.ui.handleDeleteResource('${r.id}')" title="删除">🗑</div>
+                    <div class="btn-res-action del" onclick="app.ui.handleDeleteResource('${r.id}')" title="删除"> </div>
                 </div>
             </div>
         `;
@@ -492,7 +444,6 @@ export class UIModule {
         return safeText.replace(reg, '<span class="highlight">$1</span>');
     }
 
-    // [Feature 8] Tag filter rendering
     _renderTagFilter() {
         const area = document.getElementById('tagFilterArea');
         if (!area) return;
@@ -515,7 +466,6 @@ export class UIModule {
         this.renderResourceTree();
     }
 
-    // [P1-5] Resource sort
     setSortMode(mode) {
         this.app.state.resSortMode = mode;
         this.renderResourceTree();
@@ -527,11 +477,12 @@ export class UIModule {
             if (mode === 'name') return (a.name || '').localeCompare(b.name || '');
             if (mode === 'type') return (a.type || '').localeCompare(b.type || '');
             if (mode === 'updated') return (b.updated || 0) - (a.updated || 0);
-            return (b.created || 0) - (a.created || 0); // default: created desc
+            return (b.created || 0) - (a.created || 0);
         });
     }
 
-    // [Feature 6] handleCreateFolder accepts optional parentId
+    // --- Resource CRUD ---
+
     handleCreateFolder(parentId = null) {
         if(!this.app.state.currentId) return this.toast('请先创建项目');
         this.promptUser('新建文件夹', '输入文件夹名称').then(name => {
@@ -547,7 +498,6 @@ export class UIModule {
         });
     }
 
-    // [Feature 11] Replace confirm() with confirmDialog
     async handleDeleteResource(id) {
         const res = this.app.state.resources.find(r => r.id === id);
         if (!res) return;
@@ -556,7 +506,8 @@ export class UIModule {
         if (confirmed) this.app.data.deleteResource(id);
     }
 
-    // [P2-4] Batch mode
+    // --- Batch operations ---
+
     toggleBatchMode() {
         const batchMode = !this.app.state._batchMode;
         this.app.state._batchMode = batchMode;
@@ -576,7 +527,7 @@ export class UIModule {
             return folders.filter(f => f.parentId === parentId).map(f => {
                 const indent = '\u3000'.repeat(depth);
                 const childHtml = buildOpts(f.id, depth + 1);
-                return `<option value="${f.id}">${indent}📁 ${this.app.utils.escapeHtml(f.name)}</option>${childHtml}`;
+                return `<option value="${f.id}">${indent}  ${this.app.utils.escapeHtml(f.name)}</option>${childHtml}`;
             }).join('');
         };
         html += buildOpts(null, 0);
@@ -590,7 +541,6 @@ export class UIModule {
             this.app.state._batchSelected.add(id);
         }
         document.getElementById('batchCount').textContent = `已选 ${this.app.state._batchSelected.size} 项`;
-        // Update visual
         const checkbox = document.getElementById(`batch-cb-${id}`);
         if (checkbox) checkbox.checked = this.app.state._batchSelected.has(id);
         const item = checkbox ? checkbox.closest('.res-item, .res-folder') : null;
@@ -627,7 +577,8 @@ export class UIModule {
         this.openResModal('Edit', res);
     }
 
-    // [Feature 6] openResModal updated with hierarchical folder options
+    // --- Resource modal ---
+
     openResModal(mode, res, preselectParentId = null) {
         if(!this.app.state.currentId) return this.toast('请先建项目');
         const title = document.getElementById('resModalTitle');
@@ -642,7 +593,7 @@ export class UIModule {
                 .map(f => {
                     const children = buildFolderOptions(allFolders, f.id, depth + 1);
                     const indent = '\u3000'.repeat(depth);
-                    return `<option value="${f.id}">${indent}📁 ${this.app.utils.escapeHtml(f.name)}</option>${children}`;
+                    return `<option value="${f.id}">${indent}  ${this.app.utils.escapeHtml(f.name)}</option>${children}`;
                 }).join('');
         };
         parentSel.innerHTML = '<option value="">(根目录)</option>' + buildFolderOptions(folders, null, 0);
@@ -654,7 +605,6 @@ export class UIModule {
         document.getElementById('resColorInput').value = '#000000';
         document.getElementById('resColorValue').innerText = '#000000';
 
-        // [Feature 8] Tags field
         const tagsInput = document.getElementById('resTags');
 
         if (mode === 'Edit' && res) {
@@ -686,7 +636,6 @@ export class UIModule {
 
         if (!name) return this.toast('请输入名称');
 
-        // [Feature 8] Read tags
         const tagsRaw = document.getElementById('resTags') ? document.getElementById('resTags').value : '';
         const tags = tagsRaw.split(',').map(t => t.trim()).filter(Boolean);
 
@@ -728,55 +677,51 @@ export class UIModule {
         document.getElementById('resFile').value = '';
     }
 
-    handleSaveNodeEdit() {
-        const node = this.app.state.editingNode;
-        if (node) {
-            const label = document.getElementById('nodeLabel').value;
-            const resId = document.getElementById('nodeResSelect').value || null;
-            // Color: auto-enable on change, reset clears
-            const color = this._colorReset ? null : (this._colorChanged ? document.getElementById('nodeColor').value : node.color);
-            // Note
-            const note = document.getElementById('nodeNote') ? document.getElementById('nodeNote').value.trim() || null : null;
-            // Appearance
-            const activeShape = document.querySelector('.shape-btn.active');
-            const shape = activeShape ? activeShape.dataset.shape : (node.shape || 'circle');
-            const activeLayout = document.querySelector('.layout-btn.active');
-            const layout = activeLayout ? activeLayout.dataset.layout : (node.layout || 'icon');
-            const activeTexture = document.querySelector('.texture-btn.active');
-            const texture = activeTexture ? activeTexture.dataset.texture : null;
-            const borderStyle = document.getElementById('nodeBorderStyle') ? document.getElementById('nodeBorderStyle').value : 'solid';
-            const activeRatio = document.querySelector('.ratio-btn.active');
-            const cardRatio = activeRatio ? activeRatio.dataset.ratio : null;
-            this.app.data.updateNode(node.id, { label, resId, color, note, shape, layout, texture, borderStyle, cardRatio });
-            document.getElementById('nodeMenu').style.display = 'none';
-        }
-    }
-
-    // [Feature 11] Replace confirm() with confirmDialog
     async confirmDeleteProject() {
         if (!this.app.state.currentId) return;
         const confirmed = await this.confirmDialog('确定删除此项目吗？所有数据将永久丢失。');
         if (confirmed) this.app.storage.deleteProject(this.app.state.currentId);
     }
 
+    // --- Modal helpers ---
+
     closeModal(id) {
         const el = document.getElementById(id);
         if (!el) return;
         el.style.display = 'none';
-        // Restore focus to previously focused element
+        if (el._focusTrapHandler) {
+            el.removeEventListener('keydown', el._focusTrapHandler);
+            el._focusTrapHandler = null;
+        }
         if (el._restoreFocus) { el._restoreFocus.focus(); el._restoreFocus = null; }
     }
 
     openModal(id) {
         const el = document.getElementById(id);
         if (!el) return;
-        // Save current focus and show
         el._restoreFocus = document.activeElement;
         el.style.display = 'flex';
-        // Focus first focusable element inside
         const focusable = el.querySelector('input, button, [tabindex]:not([tabindex="-1"])');
         if (focusable) setTimeout(() => focusable.focus(), 50);
+
+        // Focus trap
+        const trapHandler = (e) => {
+            if (e.key !== 'Tab') return;
+            const focusables = el.querySelectorAll('input, button, select, textarea, [tabindex]:not([tabindex="-1"])');
+            if (focusables.length === 0) return;
+            const first = focusables[0];
+            const last = focusables[focusables.length - 1];
+            if (e.shiftKey && document.activeElement === first) {
+                e.preventDefault(); last.focus();
+            } else if (!e.shiftKey && document.activeElement === last) {
+                e.preventDefault(); first.focus();
+            }
+        };
+        el._focusTrapHandler = trapHandler;
+        el.addEventListener('keydown', trapHandler);
     }
+
+    // --- Theme ---
 
     toggleTheme() {
         const body = document.body;
@@ -787,9 +732,12 @@ export class UIModule {
             body.setAttribute('data-theme', 'dark');
             localStorage.setItem('theme', 'dark');
         }
-        this._updateTooltipTheme();
+        this.tooltipManager._updateTooltipTheme();
+        this.app.graph.nodeRenderer.clearTextureCache();
         this.app.graph.needsRender = true;
     }
+
+    // --- Sidebar & misc ---
 
     triggerImport() {
         document.getElementById('importInput').click();
@@ -806,7 +754,6 @@ export class UIModule {
         this.renderResourceTree();
     }
 
-    // [Feature 3] viewResource — open viewer when no linked node
     viewResource(id) {
         const res = this.app.state.resources.find(r => r.id === id); if(!res) return;
         const n = this.app.state.nodes.find(n => n.resId === id);
@@ -816,19 +763,15 @@ export class UIModule {
             this.app.graph.needsRender = true;
             this.toast('已定位');
         } else {
-            // [Feature 12] Audio goes through openViewer
-            if (res.type === 'audio') { this.openViewer(id); }
-            else { this.openViewer(id); }
+            this.openViewer(id);
         }
     }
 
-    // [Feature 3] Full-screen resource viewer
     openViewer(resId) {
         const res = this.app.state.resources.find(r => r.id === resId);
         if (!res) return;
         document.getElementById('viewerTitle').textContent = res.name;
         const contentEl = document.getElementById('viewerContent');
-        // Stop any playing audio first
         contentEl.querySelectorAll('audio').forEach(a => a.pause());
         if (res.type === 'image') {
             if (!this.app.utils.isSafeUrl(res.content)) contentEl.textContent = '不安全的图片来源';
@@ -847,7 +790,7 @@ export class UIModule {
             else contentEl.innerHTML = `<audio controls src="${res.content}" style="margin:auto;"></audio>`;
         } else if (res.type === 'link') {
             const safeUrl = this.app.utils.isSafeUrl(res.content) ? res.content : '#';
-            contentEl.innerHTML = `<p style="word-break:break-all;margin-bottom:16px;color:var(--text-sub);">${this.app.utils.escapeHtml(res.content)}</p><a href="${safeUrl}" target="_blank" style="display:inline-block;background:var(--primary);color:white;text-decoration:none;padding:10px 20px;border-radius:8px;">跳转到链接 🔗</a>`;
+            contentEl.innerHTML = `<p style="word-break:break-all;margin-bottom:16px;color:var(--text-sub);">${this.app.utils.escapeHtml(res.content)}</p><a href="${safeUrl}" target="_blank" style="display:inline-block;background:var(--primary);color:white;text-decoration:none;padding:10px 20px;border-radius:8px;">跳转到链接 </a>`;
         }
         if (res.note) {
             contentEl.innerHTML += `<div style="margin-top:20px;padding:12px 16px;background:var(--bg-app);border-radius:8px;border-left:3px solid #f59e0b;"><span style="font-size:12px;color:var(--text-sub);display:block;margin-bottom:4px;">备注</span>${this.app.utils.escapeHtml(res.note)}</div>`;
@@ -855,69 +798,11 @@ export class UIModule {
         this.openModal('viewerModal');
     }
 
-    // [Feature 4] openNodeMenu — populate color fields
-    openNodeMenu(node, x, y) {
-        const m = this.app.dom.nodeMenu;
-        this.app.state.editingNode = node;
-
-        document.getElementById('nodeLabel').value = node.label;
-        const sel = document.getElementById('nodeResSelect');
-        sel.innerHTML = '<option value="">(无)</option>' + this.app.state.resources.filter(r=>r.type!=='folder').map(r =>
-            `<option value="${r.id}" ${r.id===node.resId?'selected':''}>${r.name}</option>`
-        ).join('');
-
-        // Color
-        this._colorChanged = false;
-        this._colorReset = false;
-        const colorInput = document.getElementById('nodeColor');
-        if (colorInput) colorInput.value = node.color || '#6366f1';
-
-        // Note
-        const noteEl = document.getElementById('nodeNote');
-        if (noteEl) noteEl.value = node.note || '';
-
-        // Shape
-        document.querySelectorAll('.shape-btn').forEach(btn => {
-            btn.classList.toggle('active', btn.dataset.shape === (node.shape || 'circle'));
-        });
-
-        // Texture
-        document.querySelectorAll('.texture-btn').forEach(btn => {
-            btn.classList.toggle('active', btn.dataset.texture === (node.texture || ''));
-        });
-
-        // Layout
-        const isCard = (node.layout || 'icon') === 'card';
-        document.querySelectorAll('.layout-btn').forEach(btn => {
-            btn.classList.toggle('active', btn.dataset.layout === (node.layout || 'icon'));
-        });
-        document.getElementById('shapeOptions').style.display = isCard ? 'none' : 'flex';
-        document.getElementById('ratioOptions').style.display = isCard ? 'flex' : 'none';
-        document.getElementById('shapeRatioLabel').textContent = isCard ? '比例' : '形状';
-
-        // Card ratio
-        document.querySelectorAll('.ratio-btn').forEach(btn => {
-            btn.classList.toggle('active', btn.dataset.ratio === (node.cardRatio || '4:3'));
-        });
-
-        // Border style
-        const borderSel = document.getElementById('nodeBorderStyle');
-        if (borderSel) borderSel.value = node.borderStyle || 'solid';
-
-        if (x !== undefined && y !== undefined) {
-            let left = x; let top = y;
-            if (left + 320 > window.innerWidth) left = window.innerWidth - 340;
-            if (top + 550 > window.innerHeight) top = window.innerHeight - 570;
-            if (left < 20) left = 20; if (top < 20) top = 20;
-
-            m.style.left = left + 'px';
-            m.style.top = top + 'px';
-        }
-        m.style.display = 'flex';
-    }
-
     toggleSidebar() {
-        document.getElementById('sidebar').classList.toggle('closed');
+        const sidebar = document.getElementById('sidebar');
+        sidebar.classList.toggle('closed');
+        const btn = document.querySelector('[data-action="toggleSidebar"]');
+        if (btn) btn.setAttribute('aria-expanded', !sidebar.classList.contains('closed'));
     }
 
     toggleResInput() {
@@ -946,67 +831,8 @@ export class UIModule {
         }
     }
 
-    showNodeBubble(node) {
-        this.app.state.bubbleNode = node;
-        this.app.dom.nodeBubble.style.display = 'flex';
-        this.updateBubblePosition();
-    }
+    // --- Cross-links & minimap ---
 
-    hideNodeBubble() {
-        this.app.state.bubbleNode = null;
-        this.app.dom.nodeBubble.style.display = 'none';
-    }
-
-    updateBubblePosition() {
-        const node = this.app.state.bubbleNode;
-        if (!node) return;
-
-        const cam = this.app.state.camera;
-        const r = (node.type === 'root' ? config.nodeRadius : config.subRadius) * (node.scale || 1);
-        const canvasRect = this.app.dom.mainCanvas.getBoundingClientRect();
-
-        const screenX = (node.x * cam.k + cam.x) + canvasRect.left;
-        const screenY = (node.y * cam.k + cam.y) + canvasRect.top;
-        const screenR = r * cam.k;
-
-        const bubble = this.app.dom.nodeBubble;
-        bubble.style.left = screenX + 'px';
-        bubble.style.top = screenY + 'px';
-        bubble.style.setProperty('--node-radius', screenR + 'px');
-    }
-
-    onBubbleEdit() {
-        const node = this.app.state.bubbleNode;
-        if (!node) return;
-        this.hideNodeBubble();
-        const cx = window.innerWidth / 2 - 160;
-        const cy = window.innerHeight / 2 - 200;
-        this.openNodeMenu(node, cx, cy);
-    }
-
-    // [Feature 11] Replace confirm() with confirmDialog
-    async onBubbleDelete() {
-        const idsToDelete = new Set();
-        if (this.app.state.bubbleNode) idsToDelete.add(this.app.state.bubbleNode.id);
-        this.app.state.selectedNodes.forEach(id => idsToDelete.add(id));
-        if (idsToDelete.size === 0) return;
-        const msg = idsToDelete.size > 1 ? `确定要删除选中的 ${idsToDelete.size} 个节点吗？` : '确定要删除这个节点及其连线吗？';
-        const confirmed = await this.confirmDialog(msg);
-        if (confirmed) this.app.data.deleteNodes(Array.from(idsToDelete));
-    }
-
-    // --- 飞线创建按钮点击事件 ---
-    onBubbleLink() {
-        const node = this.app.state.bubbleNode;
-        if (!node) return;
-
-        this.hideNodeBubble();
-        this.app.state.isLinking = true;
-        this.app.state.linkingSourceNode = node;
-        this.toast('请点击另一个节点以建立连接 (ESC取消)');
-    }
-
-    // --- 飞线显示切换 ---
     toggleCrossLinks() {
         this.app.state.showCrossLinks = !this.app.state.showCrossLinks;
         this.app.graph.needsRender = true;
@@ -1019,13 +845,14 @@ export class UIModule {
         }
     }
 
-    // [P2-5] Toggle minimap
     toggleMinimap() {
         this.app.graph.showMinimap = !this.app.graph.showMinimap;
         this.app.graph.needsRender = true;
         const btn = document.getElementById('btnToggleMinimap');
         if (btn) btn.classList.toggle('disabled', !this.app.graph.showMinimap);
     }
+
+    // --- Drag & drop ---
 
     dragStart(e, id) {
         e.dataTransfer.setData('text/plain', id); e.dataTransfer.effectAllowed = 'move';
@@ -1052,90 +879,7 @@ export class UIModule {
         this.app.state.draggedResId = null;
     }
 
-    showSidebarPreview(resId, event) {
-        this.displayTooltip(resId, event.clientX + 10, event.clientY);
-    }
-
-    displayTooltip(resId, x, y) {
-        clearTimeout(this.app.state.tooltipTimer);
-        const res = this.app.state.resources.find(r => r.id === resId);
-        if (!res) return;
-
-        this._updateTooltipTheme();
-        const isDark = document.body.getAttribute('data-theme') === 'dark';
-
-        let content = '';
-        if (res.type === 'image') {
-            content = this.app.utils.isSafeUrl(res.content) ? `<img src="${res.content}" style="max-width:100%; max-height:200px; display:block; border-radius:4px;">` : '不安全的图片来源';
-        }
-        else if (res.type === 'md') {
-            let html = '';
-            try { html = marked.parse(res.content); } catch (e) { console.error(e); }
-            html = this.app.utils.purifyHTML(html);
-            const mdBg = isDark ? '#1e1e1e' : '#f8f9fa';
-            content = `<div class="md-preview" style="background:${mdBg}; padding:10px; border-radius:4px; max-height:280px; overflow-y:auto;">${html}</div>`;
-        }
-        else if (res.type === 'code') {
-            const codeBg = isDark ? '#1e1e1e' : '#282c34';
-            const codeColor = isDark ? '#d4d4d4' : '#abb2bf';
-            content = `<pre style="font-family:monospace; background:${codeBg}; color:${codeColor}; padding:10px; border-radius:4px; font-size:12px; overflow:auto;">${this.app.utils.escapeHtml(res.content)}</pre>`;
-        }
-        else if (res.type === 'color') {
-            const borderC = isDark ? '#3f3f46' : '#ddd';
-            content = `<div style="width:100px; height:60px; background-color:${this.app.utils.escapeHtml(res.content)}; border-radius:4px; border:1px solid ${borderC}; margin-bottom:5px;"></div><div style="text-align:center; font-family:monospace; font-weight:bold;">${this.app.utils.escapeHtml(res.content)}</div>`;
-        }
-        else if (res.type === 'audio') {
-            content = this.app.utils.isSafeUrl(res.content) ? `<audio controls src="${res.content}" style="width:250px;"></audio>` : '不安全的音频来源';
-        }
-        else if (res.type === 'link') {
-            const linkSub = isDark ? '#a1a1aa' : '#555';
-            const safeUrl = this.app.utils.isSafeUrl(res.content) ? res.content : '#';
-            content = `<div style="font-size:12px; color:${linkSub}; margin-bottom:8px; word-break:break-all;">${this.app.utils.escapeHtml(res.content)}</div><a href="${safeUrl}" target="_blank" style="display:block; text-align:center; background:#667eea; color:white; text-decoration:none; padding:6px; border-radius:4px; font-size:12px;">跳转到链接 🔗</a>`;
-        }
-
-        this.tooltipEl.innerHTML = content;
-        this.tooltipEl.style.display = 'block';
-
-        const pad = 15; let top = y + pad; let left = x + pad;
-        const rect = this.tooltipEl.getBoundingClientRect();
-        if (left + rect.width > window.innerWidth) left = x - rect.width - pad;
-        if (top + rect.height > window.innerHeight) top = y - rect.height - pad;
-        this.tooltipEl.style.top = top + 'px'; this.tooltipEl.style.left = left + 'px';
-    }
-
-    // [Feature 12] Stop audio on tooltip hide
-    hideTooltip() {
-        clearTimeout(this.app.state.tooltipTimer);
-        this.app.state.tooltipTimer = setTimeout(() => {
-            if (this.tooltipEl) {
-                this.tooltipEl.querySelectorAll('audio').forEach(a => { a.pause(); a.currentTime = 0; });
-                this.tooltipEl.style.display = 'none';
-            }
-        }, config.previewDelay);
-    }
-
-    // [Feature 7] showTooltip — supports note tooltip
-    showTooltip(node, x, y) {
-        if (node.resId) {
-            this.displayTooltip(node.resId, x, y);
-        } else if (node.note) {
-            this.displayNoteTooltip(node.note, x, y);
-        }
-    }
-
-    // [Feature 7] Note tooltip
-    displayNoteTooltip(note, x, y) {
-        clearTimeout(this.app.state.tooltipTimer);
-        this.tooltipEl.innerHTML = `<div style="font-size:13px;line-height:1.6;white-space:pre-wrap;max-width:260px;">${this.app.utils.escapeHtml(note)}</div>`;
-        this.tooltipEl.style.display = 'block';
-        const pad = 15;
-        let top = y + pad, left = x + pad;
-        const rect = this.tooltipEl.getBoundingClientRect();
-        if (left + rect.width > window.innerWidth) left = x - rect.width - pad;
-        if (top + rect.height > window.innerHeight) top = y - rect.height - pad;
-        this.tooltipEl.style.top = top + 'px';
-        this.tooltipEl.style.left = left + 'px';
-    }
+    // --- Toast ---
 
     toast(m, type) {
         const container = document.getElementById('toastContainer');
@@ -1148,7 +892,6 @@ export class UIModule {
             setTimeout(() => el.remove(), 300);
         });
         container.appendChild(el);
-        // Trigger reflow then show
         el.offsetHeight;
         el.classList.add('show');
         setTimeout(() => {
@@ -1157,17 +900,22 @@ export class UIModule {
         }, 3000);
     }
 
+    // --- Export ---
+
     exportImage() {
-        this.app.graph.exportImage();
+        this.app.graph.exportManager.exportImage();
     }
 
     toggleExportMenu() {
         const menu = document.getElementById('exportMenu');
         menu.classList.toggle('show');
+        const btn = document.querySelector('[data-action="toggleExportMenu"]');
+        if (btn) btn.setAttribute('aria-expanded', menu.classList.contains('show'));
         if (menu.classList.contains('show')) {
             const close = (e) => {
                 if (!e.target.closest('.export-dropdown')) {
                     menu.classList.remove('show');
+                    if (btn) btn.setAttribute('aria-expanded', 'false');
                     document.removeEventListener('click', close);
                 }
             };
@@ -1179,97 +927,8 @@ export class UIModule {
         document.getElementById('exportMenu').classList.remove('show');
     }
 
-    // [P2-2] Node search
-    toggleNodeSearch() {
-        const bar = document.getElementById('nodeSearchBar');
-        const input = document.getElementById('nodeSearchInput');
-        if (bar.style.display === 'none') {
-            bar.style.display = 'flex';
-            input.value = '';
-            input.focus();
-            this.app.state._searchMatches = [];
-            this.app.state._searchIndex = -1;
-            this.app.graph.searchMatchNodeId = null;
-            document.getElementById('nodeSearchCount').textContent = '';
-            this.app.graph.needsRender = true;
-        } else {
-            bar.style.display = 'none';
-            this.app.state._searchMatches = [];
-            this.app.state._searchIndex = -1;
-            this.app.graph.searchMatchNodeId = null;
-            this.app.graph.needsRender = true;
-        }
-    }
+    // --- Project ---
 
-    searchNodes(keyword) {
-        if (!keyword) {
-            this.app.state._searchMatches = [];
-            this.app.state._searchIndex = -1;
-            this.app.graph.searchMatchNodeId = null;
-            document.getElementById('nodeSearchCount').textContent = '';
-            this.app.graph.needsRender = true;
-            return;
-        }
-        const kw = keyword.toLowerCase();
-        this.app.state._searchMatches = this.app.state.nodes.filter(
-            n => !n._deleting && n.label && n.label.toLowerCase().includes(kw)
-        );
-        this.app.state._searchIndex = this.app.state._searchMatches.length > 0 ? 0 : -1;
-        this._updateSearchUI();
-    }
-
-    nodeSearchPrev() {
-        const matches = this.app.state._searchMatches;
-        if (!matches || matches.length === 0) return;
-        this.app.state._searchIndex = (this.app.state._searchIndex - 1 + matches.length) % matches.length;
-        this._updateSearchUI();
-    }
-
-    nodeSearchNext() {
-        const matches = this.app.state._searchMatches;
-        if (!matches || matches.length === 0) return;
-        this.app.state._searchIndex = (this.app.state._searchIndex + 1) % matches.length;
-        this._updateSearchUI();
-    }
-
-    _updateSearchUI() {
-        const matches = this.app.state._searchMatches;
-        const idx = this.app.state._searchIndex;
-        const countEl = document.getElementById('nodeSearchCount');
-        if (!matches || matches.length === 0) {
-            countEl.textContent = '无匹配';
-            this.app.graph.searchMatchNodeId = null;
-        } else {
-            countEl.textContent = `${idx + 1}/${matches.length}`;
-            const node = matches[idx];
-            this.app.graph.searchMatchNodeId = node.id;
-            // Pan camera to center on the matched node
-            const cam = this.app.state.camera;
-            const targetX = this.app.graph.width / 2 - node.x * cam.k;
-            const targetY = this.app.graph.height / 2 - node.y * cam.k;
-            this._animateCamera(targetX, targetY, cam.k);
-        }
-        this.app.graph.needsRender = true;
-    }
-
-    _animateCamera(targetX, targetY, targetK) {
-        const cam = this.app.state.camera;
-        const startX = cam.x, startY = cam.y;
-        const duration = 300;
-        const start = performance.now();
-        const step = (now) => {
-            const t = Math.min(1, (now - start) / duration);
-            const ease = t * (2 - t); // ease-out quad
-            cam.x = startX + (targetX - startX) * ease;
-            cam.y = startY + (targetY - startY) * ease;
-            cam.k = targetK;
-            this.app.graph.needsRender = true;
-            if (t < 1) requestAnimationFrame(step);
-        };
-        requestAnimationFrame(step);
-    }
-
-    // [Feature 9] Duplicate current project
     async duplicateCurrentProject() {
         if (!this.app.state.currentId) return this.toast('请先选择一个项目');
         await this.app.storage.duplicateProject(this.app.state.currentId);

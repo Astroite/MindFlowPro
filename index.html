@@ -20,7 +20,7 @@
 <input type="file" id="importInput" style="display: none;" accept=".json,.mindflow">
 
 <div class="app-container">
-    <div class="sidebar closed" id="sidebar">
+    <div class="sidebar closed" id="sidebar" role="complementary" aria-label="资源面板">
         <div class="sidebar-header">
             <div class="brand">MindFlow</div>
             <div class="project-control">
@@ -70,9 +70,9 @@
     </div>
 
     <div class="main-area">
-        <div class="toolbar">
+        <div class="toolbar" role="toolbar" aria-label="工具栏">
             <div class="toolbar-left">
-                <button class="tool-btn" data-action="toggleSidebar" title="菜单" aria-label="切换侧边栏">☰</button>
+                <button class="tool-btn" data-action="toggleSidebar" title="菜单" aria-label="切换侧边栏" aria-expanded="false" aria-controls="sidebar">☰</button>
                 <button class="tool-btn primary" data-action="addRootNode" title="添加根节点" aria-label="添加根节点"><span>+ 根节点</span></button>
             </div>
             <div class="toolbar-center">
@@ -81,7 +81,7 @@
             <div class="toolbar-right">
                 <button class="tool-btn" data-action="resetCamera" title="视图归位 (双击画布)" aria-label="视图归位">🔎</button>
                 <div class="export-dropdown">
-                    <button class="tool-btn" data-action="toggleExportMenu" title="导出" aria-label="导出">📤 <span class="dropdown-arrow">▾</span></button>
+                    <button class="tool-btn" data-action="toggleExportMenu" title="导出" aria-label="导出" aria-expanded="false" aria-haspopup="true">📤 <span class="dropdown-arrow">▾</span></button>
                     <div class="export-menu" id="exportMenu">
                         <button data-action="exportPng">📷 导出 PNG</button>
                         <button data-action="exportSvg">📐 导出 SVG</button>
@@ -101,10 +101,10 @@
             </div>
         </div>
 
-        <div id="saveStatus" class="status-text">就绪</div>
+        <div id="saveStatus" class="status-text" role="status">就绪</div>
 
         <div class="canvas-wrapper" id="canvasWrapper">
-            <canvas id="mainCanvas"></canvas>
+            <canvas id="mainCanvas" role="img" aria-label="思维导图画布"></canvas>
         </div>
     </div>
 </div>
@@ -239,8 +239,9 @@
         <div class="form-group form-row">
             <label class="panel-label">质感</label>
             <div class="texture-options" style="display:flex;gap:6px;flex:1;">
+                <button type="button" class="texture-btn" data-texture="solid">纯色</button>
                 <button type="button" class="texture-btn" data-texture="glass">玻璃</button>
-                <button type="button" class="texture-btn" data-texture="acrylic">亚克力</button>
+                <button type="button" class="texture-btn" data-texture="acrylic">木纹</button>
                 <button type="button" class="texture-btn" data-texture="metallic">金属</button>
             </div>
         </div>
@@ -291,7 +292,7 @@
     </div>
 </div>
 
-<div id="toastContainer" class="toast-container"></div>
+<div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="true"></div>
 
 <!-- [P1-3] Inline edit input for node labels -->
 <input type="text" id="inlineEditInput" class="inline-edit-input" style="display:none;">
