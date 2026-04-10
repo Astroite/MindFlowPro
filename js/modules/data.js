@@ -1,6 +1,6 @@
 /**
  * Data Module
- * 职责：纯粹的数据操作 (CRUD)。
+ * 职责：纯粹的数据操作 (CRUD) + 增量 Undo/Redo 命令模式
  */
 export class DataModule {
     /**
@@ -50,61 +50,190 @@ export class DataModule {
         }
     }
 
-    // --- [Feature 1] Undo / Redo ---
+    // --- Undo / Redo (增量命令模式) ---
 
-    _snapshot() {
+    _pushCommand(cmd) {
         if (!this.app.state.currentId) return;
-        const snap = JSON.stringify({
-            nodes: this.app.state.nodes.map(n => ({
-                id: n.id, type: n.type, x: n.x || 0, y: n.y || 0, label: n.label, resId: n.resId, color: n.color, note: n.note,
-                shape: n.shape, texture: n.texture, layout: n.layout, borderStyle: n.borderStyle, cardRatio: n.cardRatio
-            })),
-            links: this.app.state.links.map(l => ({
-                source: typeof l.source === 'object' ? l.source.id : l.source,
-                target: typeof l.target === 'object' ? l.target.id : l.target,
-                type: l.type
-            }))
-        });
-        this.app.state.undoStack.push(snap);
+        this.app.state.undoStack.push(cmd);
         if (this.app.state.undoStack.length > this.app.config.undoLimit) this.app.state.undoStack.shift();
-        this.app.state.redoStack = []; // clear redo on new action
+        this.app.state.redoStack = [];
     }
 
-    _restoreSnapshot(snap) {
-        const { nodes, links } = JSON.parse(snap);
-        this.app.state.nodes = nodes.map(n => ({ ...n, scale: 1 }));
-        this.app.state.links = JSON.parse(JSON.stringify(links));
+    _executeCommand(cmd, isUndo) {
+        switch (cmd.type) {
+            case 'addNode': {
+                if (isUndo) {
+                    this.app.state.nodes = this.app.state.nodes.filter(n => n.id !== cmd.node.id);
+                    this.app.state.links = this.app.state.links.filter(l => {
+                        const sId = typeof l.source === 'object' ? l.source.id : l.source;
+                        const tId = typeof l.target === 'object' ? l.target.id : l.target;
+                        return sId !== cmd.node.id && tId !== cmd.node.id;
+                    });
+                } else {
+                    this.app.state.nodes.push({ ...cmd.node });
+                }
+                break;
+            }
+            case 'deleteNode': {
+                if (isUndo) {
+                    this.app.state.nodes.push({ ...cmd.node });
+                    cmd.links.forEach(l => this.app.state.links.push({ ...l }));
+                } else {
+                    this.app.state.nodes = this.app.state.nodes.filter(n => n.id !== cmd.node.id);
+                    const nodeIds = new Set([cmd.node.id]);
+                    this.app.state.links = this.app.state.links.filter(l => {
+                        const sId = typeof l.source === 'object' ? l.source.id : l.source;
+                        const tId = typeof l.target === 'object' ? l.target.id : l.target;
+                        return !nodeIds.has(sId) && !nodeIds.has(tId);
+                    });
+                }
+                break;
+            }
+            case 'updateNode': {
+                const node = this.app.state.nodes.find(n => n.id === cmd.id);
+                if (node) {
+                    const data = isUndo ? cmd.before : cmd.after;
+                    Object.keys(data).forEach(k => { node[k] = data[k]; });
+                }
+                break;
+            }
+            case 'moveNodes': {
+                cmd.deltas.forEach(d => {
+                    const node = this.app.state.nodes.find(n => n.id === d.id);
+                    if (node) {
+                        if (isUndo) { node.x -= d.dx; node.y -= d.dy; }
+                        else { node.x += d.dx; node.y += d.dy; }
+                    }
+                });
+                break;
+            }
+            case 'batchDelete': {
+                if (isUndo) {
+                    cmd.nodes.forEach(n => this.app.state.nodes.push({ ...n }));
+                    cmd.links.forEach(l => this.app.state.links.push({ ...l }));
+                } else {
+                    const deadIds = new Set(cmd.nodes.map(n => n.id));
+                    this.app.state.nodes = this.app.state.nodes.filter(n => !deadIds.has(n.id));
+                    this.app.state.links = this.app.state.links.filter(l => {
+                        const sId = typeof l.source === 'object' ? l.source.id : l.source;
+                        const tId = typeof l.target === 'object' ? l.target.id : l.target;
+                        return !deadIds.has(sId) && !deadIds.has(tId);
+                    });
+                }
+                break;
+            }
+            case 'addLink': {
+                if (isUndo) {
+                    this.app.state.links = this.app.state.links.filter(l => {
+                        const sId = typeof l.source === 'object' ? l.source.id : l.source;
+                        const tId = typeof l.target === 'object' ? l.target.id : l.target;
+                        return !(sId === cmd.link.source && tId === cmd.link.target);
+                    });
+                } else {
+                    this.app.state.links.push({ ...cmd.link });
+                }
+                break;
+            }
+            case 'deleteLink': {
+                if (isUndo) {
+                    this.app.state.links.push({ ...cmd.link });
+                } else {
+                    this.app.state.links = this.app.state.links.filter(l => {
+                        const sId = typeof l.source === 'object' ? l.source.id : l.source;
+                        const tId = typeof l.target === 'object' ? l.target.id : l.target;
+                        const cs = cmd.link.source;
+                        const ct = cmd.link.target;
+                        return !(sId === cs && tId === ct);
+                    });
+                }
+                break;
+            }
+            case 'addResource': {
+                if (isUndo) {
+                    this.app.state.resources = this.app.state.resources.filter(r => r.id !== cmd.resource.id);
+                } else {
+                    this.app.state.resources.push({ ...cmd.resource });
+                }
+                this.app.eventBus.emit('resources:updated');
+                break;
+            }
+            case 'deleteResource': {
+                if (isUndo) {
+                    cmd.resources.forEach(r => this.app.state.resources.push({ ...r }));
+                } else {
+                    const ids = new Set(cmd.resources.map(r => r.id));
+                    this.app.state.resources = this.app.state.resources.filter(r => !ids.has(r.id));
+                }
+                this.app.eventBus.emit('resources:updated');
+                break;
+            }
+            case 'updateResource': {
+                const res = this.app.state.resources.find(r => r.id === cmd.id);
+                if (res) {
+                    const data = isUndo ? cmd.before : cmd.after;
+                    Object.keys(data).forEach(k => { res[k] = data[k]; });
+                }
+                this.app.eventBus.emit('resources:updated');
+                break;
+            }
+            case 'clearAll': {
+                if (isUndo) {
+                    cmd.nodes.forEach(n => this.app.state.nodes.push({ ...n }));
+                    cmd.links.forEach(l => this.app.state.links.push({ ...l }));
+                } else {
+                    this.app.state.nodes = [];
+                    this.app.state.links = [];
+                }
+                break;
+            }
+            case 'pasteNodes': {
+                if (isUndo) {
+                    const ids = new Set(cmd.newNodes.map(n => n.id));
+                    this.app.state.nodes = this.app.state.nodes.filter(n => !ids.has(n.id));
+                    this.app.state.links = this.app.state.links.filter(l => {
+                        const sId = typeof l.source === 'object' ? l.source.id : l.source;
+                        const tId = typeof l.target === 'object' ? l.target.id : l.target;
+                        return !ids.has(sId) && !ids.has(tId);
+                    });
+                } else {
+                    cmd.newNodes.forEach(n => this.app.state.nodes.push({ ...n }));
+                    cmd.newLinks.forEach(l => this.app.state.links.push({ ...l }));
+                }
+                break;
+            }
+            case 'dropNode': {
+                if (isUndo) {
+                    const node = this.app.state.nodes.find(n => n.id === cmd.nodeId);
+                    if (node) node.resId = cmd.beforeResId;
+                } else {
+                    const node = this.app.state.nodes.find(n => n.id === cmd.nodeId);
+                    if (node) node.resId = cmd.afterResId;
+                }
+                break;
+            }
+        }
+
         this.app.state.selectedNodes.clear();
         this.app.state.selectedLink = null;
         this.app.ui.hideNodeBubble();
+        this.app.graph.needsRender = true;
         this.app.graph.updateSimulation();
         this.app.storage.triggerSave();
     }
 
     undo() {
         if (this.app.state.undoStack.length === 0) return this.app.eventBus.emit('toast', { msg: '没有可撤销的操作' });
-        // Save current as redo
-        const current = JSON.stringify({
-            nodes: this.app.state.nodes.map(n => ({ id: n.id, type: n.type, x: n.x || 0, y: n.y || 0, label: n.label, resId: n.resId, color: n.color, note: n.note,
-                shape: n.shape, texture: n.texture, layout: n.layout, borderStyle: n.borderStyle, cardRatio: n.cardRatio })),
-            links: this.app.state.links.map(l => ({ source: typeof l.source === 'object' ? l.source.id : l.source, target: typeof l.target === 'object' ? l.target.id : l.target, type: l.type }))
-        });
-        this.app.state.redoStack.push(current);
-        const snap = this.app.state.undoStack.pop();
-        this._restoreSnapshot(snap);
+        const cmd = this.app.state.undoStack.pop();
+        this.app.state.redoStack.push(cmd);
+        this._executeCommand(cmd, true);
         this.app.eventBus.emit('toast', { msg: '已撤销' });
     }
 
     redo() {
         if (this.app.state.redoStack.length === 0) return this.app.eventBus.emit('toast', { msg: '没有可重做的操作' });
-        const current = JSON.stringify({
-            nodes: this.app.state.nodes.map(n => ({ id: n.id, type: n.type, x: n.x || 0, y: n.y || 0, label: n.label, resId: n.resId, color: n.color, note: n.note,
-                shape: n.shape, texture: n.texture, layout: n.layout, borderStyle: n.borderStyle, cardRatio: n.cardRatio })),
-            links: this.app.state.links.map(l => ({ source: typeof l.source === 'object' ? l.source.id : l.source, target: typeof l.target === 'object' ? l.target.id : l.target, type: l.type }))
-        });
-        this.app.state.undoStack.push(current);
-        const snap = this.app.state.redoStack.pop();
-        this._restoreSnapshot(snap);
+        const cmd = this.app.state.redoStack.pop();
+        this.app.state.undoStack.push(cmd);
+        this._executeCommand(cmd, false);
         this.app.eventBus.emit('toast', { msg: '已重做' });
     }
 
@@ -112,13 +241,13 @@ export class DataModule {
 
     createFolder(name, parentId = null) {
         if (!this.app.state.currentId) return;
-        this._snapshot();
         const folder = this._createResourceObject({
             type: 'folder',
             name: name,
             id: this.app.config.idPrefix.folder + Date.now(),
             parentId
         });
+        this._pushCommand({ type: 'addResource', resource: { ...folder } });
         this.app.state.resources.push(folder);
         this._notifyResourceUpdate();
     }
@@ -127,9 +256,10 @@ export class DataModule {
         const folder = this.app.state.resources.find(r => r.id === id);
         if (!folder || !newName || newName.trim() === '' || newName === folder.name) return;
 
-        this._snapshot();
+        const before = { name: folder.name };
         folder.name = newName.trim();
         folder.updated = Date.now();
+        this._pushCommand({ type: 'updateResource', id, before, after: { name: folder.name } });
         this._notifyResourceUpdate('文件夹已重命名');
     }
 
@@ -150,60 +280,94 @@ export class DataModule {
             }
         }
 
-        this._snapshot();
+        const beforeParentId = res.parentId;
         res.parentId = parentId;
         res.updated = Date.now();
         if (parentId) this.app.state.expandedFolders.add(parentId);
-
+        this._pushCommand({ type: 'updateResource', id: resId, before: { parentId: beforeParentId }, after: { parentId } });
         this._notifyResourceUpdate();
     }
 
     saveResource(resourceData) {
-        this._snapshot();
         const { id, ...restData } = resourceData;
 
         if (id) {
             const res = this.app.state.resources.find(r => r.id === id);
             if (res) {
+                const fields = ['name', 'content', 'type', 'parentId', 'tags'];
+                const before = {};
+                const after = {};
+                fields.forEach(f => {
+                    if (restData[f] !== undefined) {
+                        before[f] = res[f];
+                        after[f] = restData[f];
+                    }
+                });
+                if (Object.keys(after).length === 0) return;
                 Object.assign(res, restData);
                 res.updated = Date.now();
+                this._pushCommand({ type: 'updateResource', id, before, after });
                 this._notifyResourceUpdate('资源已更新');
             } else {
-                this._addNewResource({ id, ...restData });
+                const newRes = this._createResourceObject({ id, ...restData });
+                this._pushCommand({ type: 'addResource', resource: { ...newRes } });
+                this.app.state.resources.push(newRes);
+                this._notifyResourceUpdate('资源已添加');
             }
         } else {
-            this._addNewResource(restData);
+            const newRes = this._createResourceObject(restData);
+            this._pushCommand({ type: 'addResource', resource: { ...newRes } });
+            this.app.state.resources.push(newRes);
+            this._notifyResourceUpdate('资源已添加');
         }
-    }
-
-    _addNewResource(data) {
-        const newRes = this._createResourceObject(data);
-        this.app.state.resources.push(newRes);
-        this._notifyResourceUpdate('资源已添加');
     }
 
     deleteResource(id) {
         const res = this.app.state.resources.find(r => r.id === id);
         if (!res) return;
 
-        this._snapshot();
+        const deletedResources = this._collectResourcesToDelete(id);
+        this._pushCommand({ type: 'deleteResource', resources: deletedResources.map(r => ({ ...r })) });
         this._deleteResourceInternal(id);
+        this._notifyResourceUpdate('资源已删除');
+    }
 
-        const msg = '资源已删除';
+    batchDeleteResources(ids) {
+        if (!ids || ids.length === 0) return;
+        const deletedResources = [];
+        ids.forEach(id => {
+            deletedResources.push(...this._collectResourcesToDelete(id));
+        });
+        // Deduplicate
+        const seen = new Set();
+        const unique = deletedResources.filter(r => {
+            if (seen.has(r.id)) return false;
+            seen.add(r.id);
+            return true;
+        });
+        this._pushCommand({ type: 'deleteResource', resources: unique.map(r => ({ ...r })) });
+        let totalDeleted = 0;
+        ids.forEach(id => { totalDeleted += this._deleteResourceInternal(id); });
+        const msg = totalDeleted > 1 ? `已删除 ${totalDeleted} 项资源` : '资源已删除';
         this._notifyResourceUpdate(msg);
     }
 
-    // [Bug fix] Delete multiple resources with a single snapshot
-    batchDeleteResources(ids) {
-        if (!ids || ids.length === 0) return;
-        this._snapshot();
-        let totalDeleted = 0;
-        ids.forEach(id => {
-            const count = this._deleteResourceInternal(id);
-            totalDeleted += count;
-        });
-        const msg = totalDeleted > 1 ? `已删除 ${totalDeleted} 项资源` : '资源已删除';
-        this._notifyResourceUpdate(msg);
+    _collectResourcesToDelete(id) {
+        const res = this.app.state.resources.find(r => r.id === id);
+        if (!res) return [];
+        const collect = (folderId) => {
+            const result = [];
+            const self = this.app.state.resources.find(r => r.id === folderId);
+            if (self) result.push(self);
+            this.app.state.resources
+                .filter(r => r.parentId === folderId)
+                .forEach(c => {
+                    if (c.type === 'folder') result.push(...collect(c.id));
+                    else result.push(c);
+                });
+            return result;
+        };
+        return res.type === 'folder' ? collect(id) : [res];
     }
 
     // Internal: delete a single resource and its children (no snapshot)
@@ -235,29 +399,46 @@ export class DataModule {
     // --- 节点操作 ---
 
     updateNode(nodeId, data) {
-        this._snapshot();
         const node = this.app.state.nodes.find(n => n.id === nodeId);
-        if (node) {
-            if (data.label !== undefined) node.label = data.label;
-            if (data.resId !== undefined) { node.resId = data.resId; this.app.graph.preloadImage(data.resId); }
-            if (data.color !== undefined) node.color = data.color;
-            if (data.note !== undefined) node.note = data.note;
-            if (data.shape !== undefined) node.shape = data.shape;
-            if (data.layout !== undefined) node.layout = data.layout;
-            if (data.texture !== undefined) node.texture = data.texture;
-            if (data.borderStyle !== undefined) node.borderStyle = data.borderStyle;
-            if (data.cardRatio !== undefined) node.cardRatio = data.cardRatio;
+        if (!node) return;
 
-            this.app.graph.needsRender = true;
-            this.app.storage.triggerSave();
-            this.app.eventBus.emit('toast', { msg: '节点已保存' });
-        }
+        const fields = ['label', 'resId', 'color', 'note', 'shape', 'layout', 'texture', 'borderStyle', 'cardRatio'];
+        const before = {};
+        const after = {};
+        fields.forEach(f => {
+            if (data[f] !== undefined) {
+                before[f] = node[f];
+                after[f] = data[f];
+            }
+        });
+        if (Object.keys(after).length === 0) return;
+
+        this._pushCommand({ type: 'updateNode', id: nodeId, before, after });
+        Object.assign(node, after);
+        if (data.resId !== undefined) this.app.graph.nodeRenderer.preloadImage(data.resId);
+
+        this.app.graph.needsRender = true;
+        this.app.storage.triggerSave();
+        this.app.eventBus.emit('toast', { msg: '节点已保存' });
     }
 
     deleteNodes(nodeIds) {
         if (!nodeIds || nodeIds.length === 0) return;
 
-        this._snapshot();
+        // Collect nodes and their associated links before deletion
+        const deadNodeSet = new Set(nodeIds);
+        const deletedNodes = this.app.state.nodes.filter(n => deadNodeSet.has(n.id)).map(n => ({ ...n }));
+        const deletedLinks = this.app.state.links.filter(l => {
+            const sId = typeof l.source === 'object' ? l.source.id : l.source;
+            const tId = typeof l.target === 'object' ? l.target.id : l.target;
+            return deadNodeSet.has(sId) || deadNodeSet.has(tId);
+        }).map(l => ({
+            source: typeof l.source === 'object' ? l.source.id : l.source,
+            target: typeof l.target === 'object' ? l.target.id : l.target,
+            type: l.type
+        }));
+
+        this._pushCommand({ type: 'batchDelete', nodes: deletedNodes, links: deletedLinks });
 
         // [P0-4] Animate nodes shrinking before removal
         let hasNodesToAnimate = false;
@@ -272,7 +453,6 @@ export class DataModule {
         this.app.graph.needsRender = true;
 
         // Immediately handle link removal and orphan promotion for the data model
-        const deadNodeSet = new Set(nodeIds);
         this.app.state.links = this.app.state.links.filter(l => {
             const sId = typeof l.source === 'object' ? l.source.id : l.source;
             const tId = typeof l.target === 'object' ? l.target.id : l.target;
@@ -301,22 +481,23 @@ export class DataModule {
             return;
         }
 
-        this._snapshot();
-        this.app.state.links.push({
-            source: sourceId,
-            target: targetId,
-            type: 'cross'
-        });
+        const link = { source: sourceId, target: targetId, type: 'cross' };
+        this._pushCommand({ type: 'addLink', link: { ...link } });
+        this.app.state.links.push(link);
 
         this.app.graph.updateSimulation();
         this.app.storage.triggerSave();
         this.app.eventBus.emit('toast', { msg: '飞线已创建' });
     }
 
-    // [New] 删除飞线
     deleteLink(link) {
         if (!link) return;
-        this._snapshot();
+        const linkData = {
+            source: typeof link.source === 'object' ? link.source.id : link.source,
+            target: typeof link.target === 'object' ? link.target.id : link.target,
+            type: link.type
+        };
+        this._pushCommand({ type: 'deleteLink', link: linkData });
         this.app.state.links = this.app.state.links.filter(l => l !== link);
         this.app.state.selectedLink = null;
         this.app.graph.updateSimulation();
@@ -382,8 +563,6 @@ export class DataModule {
             return this.app.eventBus.emit('toast', { msg: '剪贴板为空' });
         }
 
-        this._snapshot();
-
         // Generate new IDs for pasted nodes
         const idMap = {};
         const newNodes = this._clipboard.map(n => {
@@ -405,6 +584,7 @@ export class DataModule {
             type: l.type
         }));
 
+        this._pushCommand({ type: 'pasteNodes', newNodes: newNodes.map(n => ({ ...n })), newLinks: newLinks.map(l => ({ ...l })) });
         this.app.state.nodes.push(...newNodes);
         this.app.state.links.push(...newLinks);
 
