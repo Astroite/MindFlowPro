@@ -21,8 +21,16 @@ export class ExportManager {
         if (!isFinite(minX) || !isFinite(maxX)) return this.app.ui.toast('无法计算导出的边界');
 
         const padding = 50;
-        const width = maxX - minX + padding * 2;
-        const height = maxY - minY + padding * 2;
+        const maxExportSize = 16384;
+        let width = maxX - minX + padding * 2;
+        let height = maxY - minY + padding * 2;
+
+        // Clamp to max size, preserving aspect ratio
+        if (width > maxExportSize || height > maxExportSize) {
+            const scale = maxExportSize / Math.max(width, height);
+            width = Math.floor(width * scale);
+            height = Math.floor(height * scale);
+        }
 
         const canvas = document.createElement('canvas');
         canvas.width = width;
@@ -52,7 +60,7 @@ export class ExportManager {
 
         this.app.state.nodes.forEach(n => {
             if (isNaN(n.x) || isNaN(n.y)) return;
-            this.app.graph.nodeRenderer.drawNode(ctx, n);
+            this.app.graph.nodeRenderer.drawNode(ctx, n, isDark);
         });
 
         ctx.restore();
@@ -74,7 +82,13 @@ export class ExportManager {
             minX=Math.min(minX,n.x-r); maxX=Math.max(maxX,n.x+r);
             minY=Math.min(minY,n.y-r); maxY=Math.max(maxY,n.y+r);
         });
-        const pad=50, w=maxX-minX+pad*2, h=maxY-minY+pad*2;
+        const pad=50;
+        let w=maxX-minX+pad*2, h=maxY-minY+pad*2;
+        const maxExportSize=16384;
+        if (w>maxExportSize||h>maxExportSize) {
+            const s=maxExportSize/Math.max(w,h);
+            w=Math.floor(w*s); h=Math.floor(h*s);
+        }
         const ox=-minX+pad, oy=-minY+pad;
         const isDark = document.body.getAttribute('data-theme')==='dark';
         const colors = isDark ? config.colorsDark : config.colors;

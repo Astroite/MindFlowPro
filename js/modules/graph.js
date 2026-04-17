@@ -3,6 +3,7 @@ import { NodeRenderer } from './graph/NodeRenderer.js';
 import { LinkRenderer } from './graph/LinkRenderer.js';
 import { MinimapRenderer } from './graph/MinimapRenderer.js';
 import { ExportManager } from './graph/ExportManager.js';
+import { DataModule } from './data.js';
 
 export class GraphModule {
     /**
@@ -21,6 +22,7 @@ export class GraphModule {
         this.pinchStartScale = 1;
         this.mousePos = { x: 0, y: 0 };
         this.needsRender = true;
+        this._hasAnimatingNodes = false;
         // [P1-2] Box selection state
         this.isSelecting = false;
         this.selectionRect = null;
@@ -46,19 +48,25 @@ export class GraphModule {
     init() {
         this.canvas = this.app.dom.mainCanvas;
         this.ctx = this.canvas.getContext('2d', {colorSpace: "srgb"});
-        const resizeObserver = new ResizeObserver(() => this.resize());
+        let resizeTimer = null;
+        const resizeObserver = new ResizeObserver(() => {
+            clearTimeout(resizeTimer);
+            resizeTimer = setTimeout(() => this.resize(), config.resizeDebounceMs);
+        });
         resizeObserver.observe(this.app.dom.canvasWrapper);
 
         // 初始化力导向图
         this.app.state.simulation = d3.forceSimulation()
+            .alphaDecay(config.alphaDecay)
+            .velocityDecay(config.velocityDecay)
             .force("link", d3.forceLink().id(d => d.id)
                 .distance(config.linkDistance)
                 .strength(d => d.type === 'cross' ? 0 : 1)
             )
-            .force("charge", d3.forceManyBody().strength(d => d.type === 'root' ? config.chargeStrength * 3 : config.chargeStrength))
-            .force("collide", d3.forceCollide().radius(d => d.type === 'root' ? config.collideRadius * 1.5 : config.collideRadius))
-            .force("x", d3.forceX(0).strength(0.01))
-            .force("y", d3.forceY(0).strength(0.01))
+            .force("charge", d3.forceManyBody().strength(d => d.type === 'root' ? config.chargeStrength * config.rootChargeMultiplier : config.chargeStrength))
+            .force("collide", d3.forceCollide().radius(d => d.type === 'root' ? config.collideRadius * config.rootCollideMultiplier : config.collideRadius))
+            .force("x", d3.forceX(0).strength(config.centerForceStrength))
+            .force("y", d3.forceY(0).strength(config.centerForceStrength))
             .on("tick", () => { this.needsRender = true; });
 
         this.bindEvents();
@@ -74,8 +82,12 @@ export class GraphModule {
         this.height = wrapper.clientHeight;
 
         if (this.width > 0 && this.height > 0) {
-            this.canvas.width = this.width;
-            this.canvas.height = this.height;
+            const dpr = window.devicePixelRatio || 1;
+            this.dpr = dpr;
+            this.canvas.width = Math.floor(this.width * dpr);
+            this.canvas.height = Math.floor(this.height * dpr);
+            this.canvas.style.width = this.width + 'px';
+            this.canvas.style.height = this.height + 'px';
 
             if (!this.app.state.currentId && this.app.state.nodes.length === 0) {
                 this.resetCamera();
@@ -85,6 +97,7 @@ export class GraphModule {
             if (this.app.state.simulation) {
                 this.app.state.simulation.alpha(config.alphaTarget).restart();
             }
+            this.needsRender = true;
         }
     }
 
@@ -101,6 +114,7 @@ export class GraphModule {
         this.app.state.simulation.force("link").links(this.app.state.links);
         this.app.state.simulation.alpha(1).restart();
         this.needsRender = true;
+        this.minimapRenderer.markDirty();
     }
 
     isNodeVisible(node, padding = 100) {
@@ -123,7 +137,14 @@ export class GraphModule {
         const r = (n.type === 'root' ? config.nodeRadius : config.subRadius) * (n.scale || 1);
         const dx = px - n.x, dy = py - n.y;
         const shape = n.shape || 'circle';
-        if (shape === 'rounded-rect') return Math.abs(dx) < r && Math.abs(dy) < r;
+        if (shape === 'rounded-rect') {
+            const adx = Math.abs(dx), ady = Math.abs(dy);
+            if (adx > r || ady > r) return false;
+            const cornerR = r * (config.cornerRatio || 0.35);
+            const innerX = r - cornerR, innerY = r - cornerR;
+            if (adx <= innerX || ady <= innerY) return true;
+            return Math.hypot(adx - innerX, ady - innerY) <= cornerR;
+        }
         return Math.hypot(dx, dy) < r;
     }
 
@@ -155,13 +176,14 @@ export class GraphModule {
         }
 
         // Skip drawing if nothing changed; always draw during node-spawn animation or linking mode
-        const hasAnimatingNodes = this.app.state.nodes.some(n => n.scale < 1 || n._deleting);
-        if (!this.needsRender && !hasAnimatingNodes && !this.app.state.isLinking) {
+        if (!this.needsRender && !this._hasAnimatingNodes && !this.app.state.isLinking) {
             requestAnimationFrame(() => this.renderLoop());
             return;
         }
         this.needsRender = false;
 
+        const dpr = this.dpr || 1;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, this.width, this.height);
         ctx.save();
         ctx.translate(cam.x, cam.y);
@@ -169,15 +191,20 @@ export class GraphModule {
 
         const isDark = document.body.getAttribute('data-theme') === 'dark';
         const linkColor = isDark && config.colorsDark ? config.colorsDark.link : config.colors.link;
-        ctx.lineWidth = 1.5;
+        ctx.lineWidth = config.linkLineWidth;
 
         // Build node lookup map for O(1) access
         const nodeMap = new Map(this.app.state.nodes.map(n => [n.id, n]));
 
+        // Build resource lookup map for O(1) access (avoids Array.find per node per frame)
+        this.nodeRenderer._resourceMap = new Map(this.app.state.resources.map(r => [r.id, r]));
+
         // 绘制连线
         this.app.state.links.forEach(l => {
-            const s = l.source.id ? l.source : nodeMap.get(l.source);
-            const t = l.target.id ? l.target : nodeMap.get(l.target);
+            const sId = DataModule.linkEnd(l, 'source');
+            const tId = DataModule.linkEnd(l, 'target');
+            const s = typeof l.source === 'object' ? l.source : nodeMap.get(sId);
+            const t = typeof l.target === 'object' ? l.target : nodeMap.get(tId);
 
             if (s && t && !isNaN(s.x) && !isNaN(s.y) && !isNaN(t.x) && !isNaN(t.y)) {
                 if (this.isNodeVisible(s, config.visPadding) || this.isNodeVisible(t, config.visPadding)) {
@@ -195,32 +222,30 @@ export class GraphModule {
             if (isNaN(n.x) || isNaN(n.y)) return;
             if (!this.isNodeVisible(n)) return;
 
-            this.nodeRenderer.drawNode(ctx, n);
+            this.nodeRenderer.drawNode(ctx, n, isDark);
             if (!n._deleting) this.nodeRenderer.drawPlusButton(ctx, n);
         });
+
+        // Update animating flag for next frame
+        this._hasAnimatingNodes = false;
+        for (let i = 0; i < this.app.state.nodes.length; i++) {
+            if (this.app.state.nodes[i].scale < 1 || this.app.state.nodes[i]._deleting) {
+                this._hasAnimatingNodes = true;
+                break;
+            }
+        }
 
         // [P0-4] Remove nodes that finished delete animation
         const toRemove = this.app.state.nodes.filter(n => n._removeNow);
         if (toRemove.length > 0) {
             const removeIds = toRemove.map(n => n.id);
             this.app.state.nodes = this.app.state.nodes.filter(n => !n._removeNow);
-            // Also remove associated links
+            // Links were already pruned synchronously in deleteNodes; this catches
+            // any stragglers (e.g. links added between deleteNodes and animation end).
             this.app.state.links = this.app.state.links.filter(l => {
-                const sId = typeof l.source === 'object' ? l.source.id : l.source;
-                const tId = typeof l.target === 'object' ? l.target.id : l.target;
+                const sId = DataModule.linkEnd(l, 'source');
+                const tId = DataModule.linkEnd(l, 'target');
                 return !removeIds.includes(sId) && !removeIds.includes(tId);
-            });
-            // Handle orphan promotion
-            this.app.state.nodes.forEach(n => {
-                if (n._deleting) return;
-                const hasIncoming = this.app.state.links.some(l => {
-                    const tId = typeof l.target === 'object' ? l.target.id : l.target;
-                    return tId === n.id;
-                });
-                if (!hasIncoming && n.type === 'sub') {
-                    n.type = 'root';
-                    n.scale = 1;
-                }
             });
             this.updateSimulation();
             this.app.storage.triggerSave();
@@ -229,7 +254,7 @@ export class GraphModule {
         // [P1-1] Empty state guidance
         if (this.app.state.nodes.length === 0) {
             ctx.save();
-            ctx.resetTransform();
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
             const cx = this.width / 2;
             const cy = this.height / 2;
             ctx.textAlign = 'center';
@@ -245,7 +270,7 @@ export class GraphModule {
         // [P1-2] Draw selection rectangle
         if (this.selectionRect) {
             ctx.save();
-            ctx.resetTransform();
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
             const { startX, startY, endX, endY } = this.selectionRect;
             const x = Math.min(startX, endX);
             const y = Math.min(startY, endY);
@@ -270,15 +295,23 @@ export class GraphModule {
         this.app.ui.updateBubblePosition();
         requestAnimationFrame(() => this.renderLoop());
     }
+    _createNode({ type = 'root', x, y, label = '新节点', scale, resId }) {
+        const id = config.idPrefix.node + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+        const node = { id, type, x, y, label, scale: scale || config.newNodeScale, resId };
+        if (resId) this.nodeRenderer.preloadImage(resId);
+        return node;
+    }
+
 
     addRootNode() {
         if (!this.app.state.currentId) return this.app.ui.toast('请先新建项目');
         const cam = this.app.state.camera;
         const cx = (this.width / 2 - cam.x) / cam.k;
         const cy = (this.height / 2 - cam.y) / cam.k;
-        const node = { id: config.idPrefix.node + Date.now(), type: 'root', x: cx + (Math.random() - 0.5) * 50, y: cy + (Math.random() - 0.5) * 50, label: '新主题', scale: 0.1 };
+        const node = this._createNode({ type: 'root', x: cx + (Math.random() - 0.5) * config.newNodeSpread, y: cy + (Math.random() - 0.5) * config.newNodeSpread, label: '新主题' });
         this.app.data._pushCommand({ type: 'addNode', node: { ...node } });
         this.app.state.nodes.push(node);
+        this._hasAnimatingNodes = true;
         this.app.state.selectedNodes.clear();
         this.app.state.selectedNodes.add(node.id);
         this.app.ui.showNodeBubble(node);
@@ -289,10 +322,11 @@ export class GraphModule {
 
     addChildNode(parent) {
         const angle = Math.random() * Math.PI * 2;
-        const node = { id: config.idPrefix.node + Date.now(), type: 'sub', x: parent.x + Math.cos(angle) * 10, y: parent.y + Math.sin(angle) * 10, label: '新节点', scale: 0.05 };
-        const link = { source: parent.id, target: node.id };
+        const node = this._createNode({ type: 'sub', x: parent.x + Math.cos(angle) * config.childNodeOffset, y: parent.y + Math.sin(angle) * config.childNodeOffset, label: '新节点', scale: config.childNodeScale });
+        const link = { source: parent.id, target: node.id, type: 'structure' };
         this.app.data._pushCommand({ type: 'addNode', node: { ...node } });
         this.app.state.nodes.push(node);
+        this._hasAnimatingNodes = true;
         this.app.state.links.push(link);
         this.app.state.selectedNodes.clear();
         this.app.state.selectedNodes.add(node.id);
@@ -306,8 +340,8 @@ export class GraphModule {
         if (confirmed) {
             const snapNodes = this.app.state.nodes.map(n => ({ ...n }));
             const snapLinks = this.app.state.links.map(l => ({
-                source: typeof l.source === 'object' ? l.source.id : l.source,
-                target: typeof l.target === 'object' ? l.target.id : l.target,
+                source: DataModule.linkEnd(l, 'source'),
+                target: DataModule.linkEnd(l, 'target'),
                 type: l.type
             }));
             this.app.data._pushCommand({ type: 'clearAll', nodes: snapNodes, links: snapLinks });
@@ -325,7 +359,7 @@ export class GraphModule {
         if (!input) return;
         const cam = this.app.state.camera;
         const r = (node.type === 'root' ? config.nodeRadius : config.subRadius) * (node.scale || 1);
-        const labelY = node.y + r + 15;
+        const labelY = node.y + r + config.labelYOffset;
         const canvasRect = this.canvas.getBoundingClientRect();
         const sx = (node.x * cam.k + cam.x) + canvasRect.left;
         const sy = (labelY * cam.k + cam.y) + canvasRect.top;
@@ -334,7 +368,7 @@ export class GraphModule {
         input.style.display = 'block';
         input.style.left = (sx - 60) + 'px';
         input.style.top = (sy - 14) + 'px';
-        input.style.width = '120px';
+        input.style.width = config.inlineEditWidth + 'px';
         input.focus();
         input.select();
 
@@ -390,14 +424,10 @@ export class GraphModule {
                 if (!this.app.state.currentId) return;
                 const res = this.app.state.resources.find(r => r.id === resId);
                 if (!res || res.type === 'folder') return;
-                const node = {
-                    id: config.idPrefix.node + Date.now(), type: 'root',
-                    x: m.x + (Math.random()-0.5)*20, y: m.y + (Math.random()-0.5)*20,
-                    label: res.name, scale: 0.1, resId
-                };
+                const node = this._createNode({ x: m.x + (Math.random()-0.5)*config.dropNodeSpread, y: m.y + (Math.random()-0.5)*config.dropNodeSpread, label: res.name, resId });
                 this.app.data._pushCommand({ type: 'addNode', node: { ...node } });
                 this.app.state.nodes.push(node);
-                this.nodeRenderer.preloadImage(resId);
+                this._hasAnimatingNodes = true;
                 this.app.state.selectedNodes.clear();
                 this.app.state.selectedNodes.add(node.id);
                 this.app.ui.showNodeBubble(node);
@@ -410,6 +440,7 @@ export class GraphModule {
         window.addEventListener('keydown', (e) => {
             if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
             if (e.key === 'Delete' || e.key === 'Backspace') {
+                if (this.dragSubject) return;
                 if (this.app.state.selectedNodes.size > 0) {
                     this.app.ui.onBubbleDelete();
                 }
@@ -528,7 +559,7 @@ export class GraphModule {
 
         const handleMove = (e) => {
             this.needsRender = true;
-            getPos(e);
+            const m = getPos(e);
 
             if (e.touches && e.touches.length === 2 && this.pinchStartDist) {
                 const dx = e.touches[0].clientX - e.touches[1].clientX;
@@ -540,7 +571,6 @@ export class GraphModule {
             }
 
             if (!e.touches) {
-                const m = getPos(e);
                 const hitLink = this.linkRenderer.getLinkAtPos(m.x, m.y);
                 if (hitLink) {
                     this.canvas.style.cursor = 'pointer';
@@ -560,7 +590,6 @@ export class GraphModule {
 
             if (!this.dragSubject && !this.isPanning && !this.isSelecting) return;
             e.preventDefault();
-            const m = getPos(e);
 
             if (this.dragSubject) {
                 this.app.ui.hideNodeBubble();
@@ -625,7 +654,7 @@ export class GraphModule {
             for (let i = this.app.state.nodes.length - 1; i >= 0; i--) {
                 const n = this.app.state.nodes[i];
                 const r = (n.type === 'root' ? config.nodeRadius : config.subRadius) * (n.scale || 1);
-                const labelY = n.y + r + 15;
+                const labelY = n.y + r + config.labelYOffset;
                 const hit = n.layout==='card' ? this.hitTestCard(m.x, m.y, n) : this.hitTestNode(m.x, m.y, n);
                 const labelDist = Math.hypot(m.x - n.x, m.y - labelY);
                 if (hit || labelDist < r * 2) {

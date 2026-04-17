@@ -49,11 +49,15 @@ export class TooltipManager {
 
         let content = '';
         if (res.type === 'image') {
-            content = this.app.utils.isSafeUrl(res.content) ? `<img src="${res.content}" style="max-width:100%; max-height:200px; display:block; border-radius:4px;">` : '不安全的图片来源';
+            content = this.app.utils.isSafeUrl(res.content) ? `<img src="${this.app.utils.escapeHtml(res.content)}" style="max-width:100%; max-height:200px; display:block; border-radius:4px;">` : '不安全的图片来源';
         }
         else if (res.type === 'md') {
             let html = '';
-            try { html = marked.parse(res.content); } catch (e) { console.error(e); }
+            if (typeof marked !== 'undefined') {
+                try { html = marked.parse(res.content); } catch (e) { console.error(e); }
+            } else {
+                html = '<pre>' + this.app.utils.escapeHtml(res.content || '') + '</pre>';
+            }
             html = this.app.utils.purifyHTML(html);
             const mdBg = isDark ? '#1e1e1e' : '#f8f9fa';
             content = `<div class="md-preview" style="background:${mdBg}; padding:10px; border-radius:4px; max-height:280px; overflow-y:auto;">${html}</div>`;
@@ -68,12 +72,12 @@ export class TooltipManager {
             content = `<div style="width:100px; height:60px; background-color:${this.app.utils.escapeHtml(res.content)}; border-radius:4px; border:1px solid ${borderC}; margin-bottom:5px;"></div><div style="text-align:center; font-family:monospace; font-weight:bold;">${this.app.utils.escapeHtml(res.content)}</div>`;
         }
         else if (res.type === 'audio') {
-            content = this.app.utils.isSafeUrl(res.content) ? `<audio controls src="${res.content}" style="width:250px;"></audio>` : '不安全的音频来源';
+            content = this.app.utils.isSafeUrl(res.content) ? `<audio controls src="${this.app.utils.escapeHtml(res.content)}" style="width:250px;"></audio>` : '不安全的音频来源';
         }
         else if (res.type === 'link') {
             const linkSub = isDark ? '#a1a1aa' : '#555';
             const safeUrl = this.app.utils.isSafeUrl(res.content) ? res.content : '#';
-            content = `<div style="font-size:12px; color:${linkSub}; margin-bottom:8px; word-break:break-all;">${this.app.utils.escapeHtml(res.content)}</div><a href="${safeUrl}" target="_blank" style="display:block; text-align:center; background:#667eea; color:white; text-decoration:none; padding:6px; border-radius:4px; font-size:12px;">跳转到链接 </a>`;
+            content = `<div style="font-size:12px; color:${linkSub}; margin-bottom:8px; word-break:break-all;">${this.app.utils.escapeHtml(res.content)}</div><a href="${this.app.utils.escapeHtml(safeUrl)}" target="_blank" style="display:block; text-align:center; background:#667eea; color:white; text-decoration:none; padding:6px; border-radius:4px; font-size:12px;">跳转到链接 </a>`;
         }
 
         this.tooltipEl.innerHTML = content;

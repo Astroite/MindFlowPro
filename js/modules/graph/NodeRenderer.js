@@ -4,7 +4,8 @@ export class NodeRenderer {
     constructor(app) {
         this.app = app;
         this.imageCache = new Map();
-        this._wrapCache = null;
+        this._wrapCacheMap = new Map();
+        this._wrapCacheMax = 64;
         this.searchMatchNodeId = null;
         this.textureCache = new Map();
     }
@@ -39,7 +40,13 @@ export class NodeRenderer {
         if (!text) return [''];
         const font = ctx.font;
         const cacheKey = `${text}|${maxWidth.toFixed(1)}|${maxLines}|${font}`;
-        if (this._wrapCache && this._wrapCache.key === cacheKey) return this._wrapCache.lines;
+        if (this._wrapCacheMap.has(cacheKey)) {
+            // Move to end (most recently used)
+            const cached = this._wrapCacheMap.get(cacheKey);
+            this._wrapCacheMap.delete(cacheKey);
+            this._wrapCacheMap.set(cacheKey, cached);
+            return cached;
+        }
         const lines = [];
         let remaining = text;
         while (remaining.length > 0 && lines.length < maxLines) {
@@ -60,7 +67,11 @@ export class NodeRenderer {
             }
         }
         const result = lines.length > 0 ? lines : [''];
-        this._wrapCache = { key: cacheKey, lines: result };
+        this._wrapCacheMap.set(cacheKey, result);
+        if (this._wrapCacheMap.size > this._wrapCacheMax) {
+            // Evict oldest (first) entry
+            this._wrapCacheMap.delete(this._wrapCacheMap.keys().next().value);
+        }
         return result;
     }
 
@@ -78,7 +89,7 @@ export class NodeRenderer {
         }
     }
 
-    drawNode(ctx, n) {
+    drawNode(ctx, n, isDark) {
         if (isNaN(n.x) || isNaN(n.y)) return;
 
         if (typeof n.scale === 'undefined') n.scale = 1;
@@ -95,7 +106,7 @@ export class NodeRenderer {
             if (n.scale > 0.99) n.scale = 1;
         }
 
-        const isDark = document.body.getAttribute('data-theme') === 'dark';
+        if (typeof isDark !== 'boolean') isDark = document.body.getAttribute('data-theme') === 'dark';
         const themeColors = isDark ? (config.colorsDark || config.colors) : config.colors;
 
         const r = (n.type === 'root' ? config.nodeRadius : config.subRadius) * (n.scale || 1);
@@ -105,7 +116,7 @@ export class NodeRenderer {
         let textColor = themeColors.textMain;
         let isColorCard = false;
 
-        const res = n.resId ? this.app.state.resources.find(r => r.id === n.resId) : null;
+        const res = n.resId ? (this._resourceMap && this._resourceMap.get(n.resId)) || this.app.state.resources.find(r => r.id === n.resId) : null;
 
         if (n.type === 'root') {
             fillColor = themeColors.primary;
@@ -166,7 +177,7 @@ export class NodeRenderer {
 
         // 2b. Texture effect overlay
         if (n.texture) {
-            this.drawTextureEffect(ctx, n.x, n.y, r, shape, n.texture);
+            this.drawTextureEffect(ctx, n.x, n.y, r, shape, n.texture, isDark);
         }
 
         // 3. 绘制内容
@@ -262,8 +273,8 @@ export class NodeRenderer {
 
     // --- Material textures ---
 
-    drawTextureEffect(ctx, cx, cy, r, shape, texture) {
-        const isDark = document.body.getAttribute('data-theme') === 'dark';
+    drawTextureEffect(ctx, cx, cy, r, shape, texture, isDark) {
+        if (typeof isDark !== 'boolean') isDark = document.body.getAttribute('data-theme') === 'dark';
         if (texture === 'solid') {
             // Pure color — no overlay
         } else if (texture === 'glass') {
@@ -278,74 +289,52 @@ export class NodeRenderer {
     // --- Liquid Glass ---
 
     _drawLiquidGlass(ctx, cx, cy, r, shape, isDark) {
-        // 1. Bottom depth shadow
-        const shadow = ctx.createLinearGradient(cx, cy - r, cx, cy + r);
-        shadow.addColorStop(0, 'rgba(0,0,0,0)');
-        shadow.addColorStop(0.6, 'rgba(0,0,0,0.04)');
-        shadow.addColorStop(1, isDark ? 'rgba(0,0,0,0.18)' : 'rgba(0,0,0,0.12)');
+        // 1. Bottom depth gradient — subtle darkening at the base gives a sense of form
+        const depth = ctx.createLinearGradient(cx, cy - r, cx, cy + r);
+        depth.addColorStop(0, 'rgba(255,255,255,0)');
+        depth.addColorStop(0.55, 'rgba(0,0,0,0)');
+        depth.addColorStop(1, isDark ? 'rgba(0,0,0,0.25)' : 'rgba(10,20,40,0.12)');
         this.drawNodeShape(ctx, cx, cy, r, shape);
-        ctx.fillStyle = shadow;
+        ctx.fillStyle = depth;
         ctx.fill();
 
-        // 2. Inner glow
-        const glow = ctx.createRadialGradient(cx, cy - r * 0.35, 0, cx, cy, r * 0.85);
-        glow.addColorStop(0, isDark ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.18)');
+        // 2. Large diffuse top-left glow — main key light
+        const lightX = cx - r * 0.32, lightY = cy - r * 0.42;
+        const glow = ctx.createRadialGradient(lightX, lightY, 0, lightX, lightY, r * 1.15);
+        glow.addColorStop(0, isDark ? 'rgba(255,255,255,0.28)' : 'rgba(255,255,255,0.42)');
+        glow.addColorStop(0.35, isDark ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.14)');
         glow.addColorStop(1, 'rgba(255,255,255,0)');
         this.drawNodeShape(ctx, cx, cy, r, shape);
         ctx.fillStyle = glow;
         ctx.fill();
 
-        // 3. Caustic light spots (cached offscreen)
-        const cacheKey = `glass-spots-${Math.round(r)}-${isDark ? 'd' : 'l'}`;
-        const offscreen = this._getCachedOffscreen(cacheKey, Math.ceil(r * 2 + 8), (octx, size) => {
-            const c = size / 2;
-            const seed = Math.round(r);
-            const spots = [
-                { a: -0.52, d: 0.28, s: 0.25 },
-                { a: 0.79, d: 0.42, s: 0.30 },
-                { a: 2.62, d: 0.60, s: 0.22 },
-                { a: -2.09, d: 0.78, s: 0.18 }
-            ];
-            spots.forEach((sp, i) => {
-                const sx = c + Math.cos(sp.a + seed * 0.1) * r * sp.d;
-                const sy = c + Math.sin(sp.a + seed * 0.1) * r * sp.d;
-                const sr = r * sp.s;
-                const g = octx.createRadialGradient(sx, sy, 0, sx, sy, sr);
-                g.addColorStop(0, 'rgba(255,255,255,0.22)');
-                g.addColorStop(0.3, 'rgba(255,255,255,0.08)');
-                g.addColorStop(1, 'rgba(255,255,255,0)');
-                octx.fillStyle = g;
-                octx.fillRect(0, 0, size, size);
-            });
-        });
-        this._fillWithPattern(ctx, cx, cy, r, shape, offscreen);
-
-        // 4. Bright rim highlight (top arc)
-        ctx.save();
-        this.drawNodeShape(ctx, cx, cy, r, shape);
-        ctx.lineWidth = 2.5;
-        const rimGrad = ctx.createLinearGradient(cx, cy - r, cx, cy + r * 0.3);
-        rimGrad.addColorStop(0, 'rgba(255,255,255,0.6)');
-        rimGrad.addColorStop(0.4, 'rgba(255,255,255,0.15)');
-        rimGrad.addColorStop(1, 'rgba(255,255,255,0)');
-        ctx.strokeStyle = rimGrad;
-        ctx.stroke();
-        ctx.restore();
-
-        // 5. Top specular catch-light
-        const spec = ctx.createRadialGradient(cx - r * 0.15, cy - r * 0.5, 0, cx - r * 0.15, cy - r * 0.5, r * 0.35);
-        spec.addColorStop(0, 'rgba(255,255,255,0.45)');
-        spec.addColorStop(0.5, 'rgba(255,255,255,0.12)');
+        // 3. Sharp catch-light — tiny specular dot where the key light peaks
+        const spec = ctx.createRadialGradient(lightX, lightY, 0, lightX, lightY, r * 0.22);
+        spec.addColorStop(0, 'rgba(255,255,255,0.85)');
+        spec.addColorStop(0.55, 'rgba(255,255,255,0.15)');
         spec.addColorStop(1, 'rgba(255,255,255,0)');
         this.drawNodeShape(ctx, cx, cy, r, shape);
         ctx.fillStyle = spec;
         ctx.fill();
 
-        // 6. Frosted tint (soft-light blend)
+        // 4. Fresnel rim — bright top, soft bottom return (refraction at the edge)
+        ctx.save();
+        this.drawNodeShape(ctx, cx, cy, r, shape);
+        ctx.lineWidth = 1.2;
+        const rim = ctx.createLinearGradient(cx, cy - r, cx, cy + r);
+        rim.addColorStop(0, 'rgba(255,255,255,0.85)');
+        rim.addColorStop(0.45, 'rgba(255,255,255,0.05)');
+        rim.addColorStop(0.7, 'rgba(255,255,255,0)');
+        rim.addColorStop(1, isDark ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.28)');
+        ctx.strokeStyle = rim;
+        ctx.stroke();
+        ctx.restore();
+
+        // 5. Cool tint (soft-light preserves underlying color)
         ctx.save();
         ctx.globalCompositeOperation = 'soft-light';
         this.drawNodeShape(ctx, cx, cy, r, shape);
-        ctx.fillStyle = isDark ? 'rgba(180,190,220,0.08)' : 'rgba(200,210,230,0.12)';
+        ctx.fillStyle = isDark ? 'rgba(180,210,255,0.22)' : 'rgba(210,225,255,0.28)';
         ctx.fill();
         ctx.restore();
     }
@@ -353,77 +342,75 @@ export class NodeRenderer {
     // --- Wood Grain ---
 
     _drawWood(ctx, cx, cy, r, shape, isDark) {
-        const cacheKey = `wood-${Math.round(r)}-${isDark ? 'd' : 'l'}`;
+        const cacheKey = `wood-v2-${Math.round(r)}-${isDark ? 'd' : 'l'}`;
         const offscreen = this._getCachedOffscreen(cacheKey, Math.ceil(r * 2 + 8), (octx, size) => {
-            // Base color
-            octx.fillStyle = isDark ? 'rgb(120,85,60)' : 'rgb(194,154,108)';
-            octx.fillRect(0, 0, size, size);
-
-            // Grain lines (1D noise via nested sin)
-            const grainColor = isDark ? '50,30,15' : '90,60,30';
-            const grainAlpha = isDark ? 0.10 : 0.15;
-            for (let y = 0; y < size; y++) {
-                const noise = Math.sin(y * 0.3 + Math.sin(y * 0.07) * 4) * 0.5 + 0.5;
-                octx.globalAlpha = noise * grainAlpha;
-                octx.fillStyle = `rgb(${grainColor})`;
-                octx.fillRect(0, y, size, 1);
+            // Warm diagonal base — gives depth without flat look
+            const base = octx.createLinearGradient(0, 0, size, size);
+            if (isDark) {
+                base.addColorStop(0, 'rgb(108,76,48)');
+                base.addColorStop(1, 'rgb(72,48,28)');
+            } else {
+                base.addColorStop(0, 'rgb(198,152,102)');
+                base.addColorStop(1, 'rgb(166,122,82)');
             }
-            octx.globalAlpha = 1;
-
-            // Ring knots (2 concentric clusters)
-            const seed = Math.round(r);
-            const knots = [
-                { x: size * (0.3 + (seed % 3) * 0.05), y: size * (0.35 + (seed % 5) * 0.03) },
-                { x: size * (0.7 - (seed % 4) * 0.04), y: size * (0.65 + (seed % 3) * 0.04) }
-            ];
-            knots.forEach(k => {
-                for (let ring = 0; ring < 4; ring++) {
-                    const rr = r * 0.15 + ring * r * 0.06;
-                    const g = octx.createRadialGradient(k.x, k.y, rr - 1, k.x, k.y, rr + 1);
-                    g.addColorStop(0, isDark ? 'rgba(50,30,15,0.10)' : 'rgba(80,50,20,0.12)');
-                    g.addColorStop(1, 'rgba(80,50,20,0)');
-                    octx.fillStyle = g;
-                    octx.fillRect(0, 0, size, size);
-                }
-            });
-
-            // Directional sheen along grain
-            const sheen = octx.createLinearGradient(0, 0, size, size * 0.85);
-            sheen.addColorStop(0, 'rgba(255,220,160,0.08)');
-            sheen.addColorStop(0.5, 'rgba(255,220,160,0)');
-            sheen.addColorStop(1, 'rgba(255,220,160,0.05)');
-            octx.fillStyle = sheen;
+            octx.fillStyle = base;
             octx.fillRect(0, 0, size, size);
+
+            // Organic grain — layered sines give fine + coarse variation
+            const seed = Math.round(r) * 0.13;
+            const darkHex = isDark ? '40,22,8' : '84,54,26';
+            const lightHex = isDark ? '170,118,74' : '235,198,150';
+            for (let y = 0; y < size; y++) {
+                const n = Math.sin(y * 0.18 + seed) * 0.45
+                        + Math.sin(y * 0.07 + seed * 2.3) * 0.35
+                        + Math.sin(y * 0.41 + seed * 4.1) * 0.20;
+                const v = (n + 1) / 2; // 0..1
+                if (v < 0.34) {
+                    const a = (0.12 + (0.34 - v) * 0.55).toFixed(3);
+                    octx.fillStyle = `rgba(${darkHex},${a})`;
+                    octx.fillRect(0, y, size, 1);
+                } else if (v > 0.72) {
+                    const a = (0.04 + (v - 0.72) * 0.28).toFixed(3);
+                    octx.fillStyle = `rgba(${lightHex},${a})`;
+                    octx.fillRect(0, y, size, 1);
+                }
+            }
+
+            // Vertical micro-streaks add plank grain
+            for (let x = 2; x < size; x += 2 + ((x * 7 + seed * 19) | 0) % 4) {
+                octx.fillStyle = isDark ? 'rgba(0,0,0,0.035)' : 'rgba(0,0,0,0.028)';
+                octx.fillRect(x, 0, 1, size);
+            }
         });
 
         // Layer 1: Wood pattern fill
         this._fillWithPattern(ctx, cx, cy, r, shape, offscreen);
 
-        // Layer 2: Top highlight
-        const hl = ctx.createLinearGradient(cx, cy - r, cx, cy + r * 0.5);
-        hl.addColorStop(0, isDark ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.15)');
-        hl.addColorStop(0.4, isDark ? 'rgba(255,255,255,0.03)' : 'rgba(255,255,255,0.05)');
-        hl.addColorStop(1, 'rgba(255,255,255,0)');
+        // Layer 2: Warm top light
+        const hl = ctx.createLinearGradient(cx, cy - r, cx, cy + r * 0.2);
+        hl.addColorStop(0, isDark ? 'rgba(255,220,180,0.22)' : 'rgba(255,240,210,0.32)');
+        hl.addColorStop(1, 'rgba(255,220,180,0)');
         this.drawNodeShape(ctx, cx, cy, r, shape);
         ctx.fillStyle = hl;
         ctx.fill();
 
-        // Layer 3: Varnish sheen (overlay blend)
+        // Layer 3: Polished varnish reflection
         ctx.save();
         ctx.globalCompositeOperation = 'overlay';
-        const varnish = ctx.createRadialGradient(cx - r * 0.2, cy - r * 0.3, 0, cx - r * 0.2, cy - r * 0.3, r * 0.7);
-        varnish.addColorStop(0, isDark ? 'rgba(255,255,200,0.10)' : 'rgba(255,255,200,0.20)');
-        varnish.addColorStop(1, 'rgba(255,255,200,0)');
+        const varnish = ctx.createRadialGradient(cx - r * 0.25, cy - r * 0.4, 0, cx - r * 0.25, cy - r * 0.4, r * 0.85);
+        varnish.addColorStop(0, isDark ? 'rgba(255,240,200,0.22)' : 'rgba(255,245,215,0.30)');
+        varnish.addColorStop(0.55, 'rgba(255,240,200,0.04)');
+        varnish.addColorStop(1, 'rgba(255,240,200,0)');
         this.drawNodeShape(ctx, cx, cy, r, shape);
         ctx.fillStyle = varnish;
         ctx.fill();
         ctx.restore();
 
-        // Layer 4: Edge vignette
-        const vig = ctx.createRadialGradient(cx, cy, r * 0.3, cx, cy, r);
+        // Layer 4: Edge vignette — warm brown at light mode, deep shadow in dark
+        const vig = ctx.createRadialGradient(cx, cy, r * 0.55, cx, cy, r * 1.02);
         vig.addColorStop(0, 'rgba(0,0,0,0)');
-        vig.addColorStop(0.7, 'rgba(0,0,0,0)');
-        vig.addColorStop(1, 'rgba(0,0,0,0.10)');
+        vig.addColorStop(0.75, 'rgba(0,0,0,0)');
+        vig.addColorStop(1, isDark ? 'rgba(0,0,0,0.35)' : 'rgba(60,30,10,0.22)');
         this.drawNodeShape(ctx, cx, cy, r, shape);
         ctx.fillStyle = vig;
         ctx.fill();
@@ -432,82 +419,78 @@ export class NodeRenderer {
     // --- Brushed Metal ---
 
     _drawBrushedMetal(ctx, cx, cy, r, shape, isDark) {
-        const cacheKey = `metal-${Math.round(r)}-${isDark ? 'd' : 'l'}`;
+        const cacheKey = `metal-v2-${Math.round(r)}-${isDark ? 'd' : 'l'}`;
         const offscreen = this._getCachedOffscreen(cacheKey, Math.ceil(r * 2 + 8), (octx, size) => {
-            // Base color
-            octx.fillStyle = isDark ? 'rgb(70,70,75)' : 'rgb(180,180,185)';
+            // Vertical base gradient (sky highlight top, ground shadow bottom)
+            const base = octx.createLinearGradient(0, 0, 0, size);
+            if (isDark) {
+                base.addColorStop(0, 'rgb(138,140,146)');
+                base.addColorStop(0.5, 'rgb(72,74,80)');
+                base.addColorStop(1, 'rgb(42,44,48)');
+            } else {
+                base.addColorStop(0, 'rgb(236,238,242)');
+                base.addColorStop(0.5, 'rgb(172,174,182)');
+                base.addColorStop(1, 'rgb(130,132,140)');
+            }
+            octx.fillStyle = base;
             octx.fillRect(0, 0, size, size);
 
-            // Brushed lines (deterministic pseudo-random positions)
-            const seed = Math.round(r);
-            for (let i = 0; i < 100; i++) {
-                const y = (i * 7 + seed * 3 + (i * 13) % 17) % size;
-                const isLight = i % 2 === 0;
-                if (isDark) {
-                    octx.fillStyle = isLight ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.06)';
+            // Fine horizontal brushing — hash-based per row, both lighter and darker
+            const seed = Math.round(r) * 17 + 1;
+            for (let y = 0; y < size; y++) {
+                const h = (Math.sin(y * 12.9898 + seed) * 43758.5453);
+                const v = h - Math.floor(h); // pseudo-random 0..1
+                if (v < 0.5) {
+                    octx.fillStyle = `rgba(0,0,0,${(0.015 + v * 0.10).toFixed(3)})`;
                 } else {
-                    octx.fillStyle = isLight ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)';
+                    octx.fillStyle = `rgba(255,255,255,${(0.015 + (v - 0.5) * 0.11).toFixed(3)})`;
                 }
                 octx.fillRect(0, y, size, 1);
             }
-
-            // Color band (warm/cool shift)
-            const cb = octx.createLinearGradient(0, 0, size, size);
-            cb.addColorStop(0, 'rgba(180,200,220,0.06)');
-            cb.addColorStop(0.4, 'rgba(200,180,160,0.04)');
-            cb.addColorStop(0.6, 'rgba(180,200,220,0.06)');
-            cb.addColorStop(1, 'rgba(160,160,180,0.04)');
-            octx.fillStyle = cb;
-            octx.fillRect(0, 0, size, size);
         });
 
         // Layer 1: Brushed pattern fill
         this._fillWithPattern(ctx, cx, cy, r, shape, offscreen);
 
-        // Layer 2: Anisotropic specular band (sharp plateau in upper third)
-        const spec = ctx.createLinearGradient(cx, cy - r, cx, cy + r);
-        spec.addColorStop(0, 'rgba(255,255,255,0.08)');
-        spec.addColorStop(0.18, 'rgba(255,255,255,0.08)');
-        spec.addColorStop(0.22, 'rgba(255,255,255,0.50)');
-        spec.addColorStop(0.28, 'rgba(255,255,255,0.50)');
-        spec.addColorStop(0.32, 'rgba(255,255,255,0.08)');
-        spec.addColorStop(1, 'rgba(0,0,0,0.08)');
+        // Layer 2: Soft anisotropic highlight band (top 40%)
+        const spec = ctx.createLinearGradient(cx, cy - r, cx, cy + r * 0.2);
+        spec.addColorStop(0, 'rgba(255,255,255,0.38)');
+        spec.addColorStop(0.5, 'rgba(255,255,255,0.10)');
+        spec.addColorStop(1, 'rgba(255,255,255,0)');
         this.drawNodeShape(ctx, cx, cy, r, shape);
         ctx.fillStyle = spec;
         ctx.fill();
 
-        // Layer 3: Bottom reflection
-        const refl = ctx.createLinearGradient(cx, cy, cx, cy + r);
-        refl.addColorStop(0, 'rgba(0,0,0,0)');
-        refl.addColorStop(0.5, 'rgba(0,0,0,0)');
-        refl.addColorStop(1, 'rgba(255,255,255,0.06)');
+        // Layer 3: Bottom environment shadow
+        const btm = ctx.createLinearGradient(cx, cy + r * 0.15, cx, cy + r);
+        btm.addColorStop(0, 'rgba(0,0,0,0)');
+        btm.addColorStop(1, isDark ? 'rgba(0,0,0,0.38)' : 'rgba(0,0,0,0.20)');
         this.drawNodeShape(ctx, cx, cy, r, shape);
-        ctx.fillStyle = refl;
+        ctx.fillStyle = btm;
         ctx.fill();
 
-        // Layer 4: Edge bevel (top-left light, bottom-right dark)
-        ctx.save();
-        this.drawNodeShape(ctx, cx, cy, r, shape);
-        ctx.lineWidth = 1.5;
-        const bev = ctx.createLinearGradient(cx - r, cy - r, cx + r, cy + r);
-        bev.addColorStop(0, isDark ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.35)');
-        bev.addColorStop(0.5, 'rgba(255,255,255,0.05)');
-        bev.addColorStop(1, 'rgba(0,0,0,0.15)');
-        ctx.strokeStyle = bev;
-        ctx.stroke();
-        ctx.restore();
-
-        // Layer 5: Color shift overlay (soft-light blend)
+        // Layer 4: Chrome-like horizontal color shift (soft-light)
         ctx.save();
         ctx.globalCompositeOperation = 'soft-light';
-        const cshift = ctx.createLinearGradient(cx - r, cy - r, cx + r, cy + r);
-        const a = isDark ? 0.06 : 0.12;
-        cshift.addColorStop(0, `rgba(100,140,200,${a})`);
-        cshift.addColorStop(0.5, `rgba(200,160,100,${a * 0.67})`);
-        cshift.addColorStop(1, `rgba(100,140,200,${a})`);
+        const cshift = ctx.createLinearGradient(cx - r, cy, cx + r, cy);
+        cshift.addColorStop(0, isDark ? 'rgba(120,150,210,0.22)' : 'rgba(180,205,235,0.28)');
+        cshift.addColorStop(0.5, 'rgba(255,255,255,0)');
+        cshift.addColorStop(1, isDark ? 'rgba(220,180,140,0.22)' : 'rgba(235,205,170,0.28)');
         this.drawNodeShape(ctx, cx, cy, r, shape);
         ctx.fillStyle = cshift;
         ctx.fill();
+        ctx.restore();
+
+        // Layer 5: Two-tone polished bevel
+        ctx.save();
+        this.drawNodeShape(ctx, cx, cy, r, shape);
+        ctx.lineWidth = 1;
+        const bev = ctx.createLinearGradient(cx, cy - r, cx, cy + r);
+        bev.addColorStop(0, 'rgba(255,255,255,0.65)');
+        bev.addColorStop(0.45, 'rgba(255,255,255,0.08)');
+        bev.addColorStop(1, isDark ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0.25)');
+        ctx.strokeStyle = bev;
+        ctx.stroke();
         ctx.restore();
     }
 
@@ -567,7 +550,7 @@ export class NodeRenderer {
                 this.imageCache.set(res.id, 'loading');
             }
             const img = this.imageCache.get(res.id);
-            if (img && img !== 'loading') {
+            if (img && img !== 'loading' && img !== 'error' && img.width) {
                 const scaleImg = Math.max(w / img.width, imgH / img.height);
                 ctx.drawImage(img, n.x - img.width * scaleImg / 2, y + imgH / 2 - img.height * scaleImg / 2, img.width * scaleImg, img.height * scaleImg);
             }
@@ -698,19 +681,30 @@ export class NodeRenderer {
         if (!this.app.utils.isSafeUrl(res.content)) return;
         const img = new Image(); img.src = res.content;
         img.onload = () => { this.imageCache.set(res.id, img); this.app.graph.needsRender = true; };
-        img.onerror = () => { this.imageCache.set(res.id, 'error'); };
+        img.onerror = () => {
+            this.imageCache.set(res.id, 'error');
+            // Clear the error entry after 30s so a later retry (e.g. transient data URL parse) can succeed
+            setTimeout(() => {
+                if (this.imageCache.get(res.id) === 'error') this.imageCache.delete(res.id);
+            }, 30000);
+        };
         this.imageCache.set(res.id, 'loading');
     }
 
     drawImageInNode(ctx, node, res, r, shape) {
         if (!this.imageCache.has(res.id) && this.app.utils.isSafeUrl(res.content)) {
             const img = new Image(); img.src = res.content;
-            img.onload = () => this.imageCache.set(res.id, img);
-            img.onerror = () => { this.imageCache.set(res.id, 'error'); };
+            img.onload = () => { this.imageCache.set(res.id, img); this.app.graph.needsRender = true; };
+            img.onerror = () => {
+                this.imageCache.set(res.id, 'error');
+                setTimeout(() => {
+                    if (this.imageCache.get(res.id) === 'error') this.imageCache.delete(res.id);
+                }, 30000);
+            };
             this.imageCache.set(res.id, 'loading');
         }
         const img = this.imageCache.get(res.id);
-        if (img && img !== 'loading') {
+        if (img && img !== 'loading' && img !== 'error' && img.width) {
             ctx.save();
             this.drawNodeShape(ctx, node.x, node.y, r - 2, shape || 'circle');
             ctx.clip();

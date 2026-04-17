@@ -16,10 +16,13 @@ export const utils = {
         if (window.DOMPurify) {
             return window.DOMPurify.sanitize(html);
         }
-        // 降级方案：简单的脚本剥离
+        // 降级方案：剥离危险标签和事件处理器
         console.warn('DOMPurify not loaded. Using fallback sanitization.');
-        return html.replace(/<script\b[^>]*>([\s\S]*?)<\/script>/gim, "")
-            .replace(/on\w+="[^"]*"/g, "");
+        return html
+            .replace(/<(script|iframe|object|embed|svg|math|style)\b[^>]*>[\s\S]*?<\/\1>/gim, "")
+            .replace(/<(script|iframe|object|embed|svg|math|style)\b[^>]*\/?>/gim, "")
+            .replace(/\bon\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "")
+            .replace(/javascript\s*:/gi, "");
     },
 
     // 简单的 HTML 转义（用于非 Markdown 文本）
@@ -29,7 +32,8 @@ export const utils = {
             .replace(/</g, "&lt;")
             .replace(/>/g, "&gt;")
             .replace(/"/g, "&quot;")
-            .replace(/'/g, "&#039;");
+            .replace(/'/g, "&#039;")
+            .replace(/`/g, "&#96;");
     },
 
     // URL scheme 白名单校验，防止 javascript: 注入
@@ -39,9 +43,9 @@ export const utils = {
         return trimmed.startsWith('https:') || trimmed.startsWith('data:image/') || trimmed.startsWith('blob:');
     },
 
-    // 图片压缩：限制最大宽高，转换为 JPEG
+    // 图片压缩：限制最大宽高，转换为 JPEG。失败时 reject，调用方需处理
     compressImage: (base64Str, maxWidth = 1024, quality = 0.8) => {
-        return new Promise((resolve) => {
+        return new Promise((resolve, reject) => {
             const img = new Image();
             img.src = base64Str;
             img.onload = () => {
@@ -58,10 +62,9 @@ export const utils = {
                 canvas.height = height;
                 const ctx = canvas.getContext('2d');
                 ctx.drawImage(img, 0, 0, width, height);
-                // 转换为 JPEG 格式以减小体积
                 resolve(canvas.toDataURL('image/jpeg', quality));
             };
-            img.onerror = () => resolve(base64Str); // 如果压缩失败，返回原图
+            img.onerror = () => reject(new Error('图片解码失败，文件可能已损坏'));
         });
     }
 };
