@@ -3,12 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' https: blob:; connect-src 'self' https:;">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' https: blob:; connect-src 'self' https:;">
     <title>MindFlow - 本地化视觉思维导图</title>
 
     <link rel="manifest" href="manifest.json">
     <link rel="stylesheet" href="css/style.css">
 
+    <script src="js/bootstrap.js"></script>
     <script type="module" src="js/app.js"></script>
 
     <script defer src="js/lib/d3.v7.min.js"></script>
@@ -18,7 +19,7 @@
 </head>
 <body>
 
-<a href="#mainCanvas" class="skip-link" style="position:absolute;left:-9999px;top:0;z-index:9999;padding:8px 16px;background:#6366f1;color:#fff;text-decoration:none;border-radius:0 0 4px 0;" onfocus="this.style.left='0'" onblur="this.style.left='-9999px'">跳转到画布</a>
+<a href="#mainCanvas" class="skip-link" style="position:absolute;left:-9999px;top:0;z-index:9999;padding:8px 16px;background:#6366f1;color:#fff;text-decoration:none;border-radius:0 0 4px 0;">跳转到画布</a>
 
 <input type="file" id="importInput" style="display: none;" accept=".json,.mindflow">
 
@@ -33,9 +34,9 @@
                 <div class="search-box">
                     <span class="search-icon">🔍</span>
                     <label>
-                        <input type="text" class="search-input" placeholder="搜索资源..." oninput="app.ui.filterResources(this.value)">
+                        <input type="text" class="search-input" placeholder="搜索资源...">
                     </label>
-                    <select class="sort-select" onchange="app.ui.setSortMode(this.value)" title="排序方式" aria-label="排序方式">
+                    <select class="sort-select" title="排序方式" aria-label="排序方式">
                         <option value="created">创建时间</option>
                         <option value="updated">更新时间</option>
                         <option value="name">名称</option>
@@ -96,7 +97,7 @@
                 <button class="tool-btn" data-action="openShortcuts" title="快捷键" aria-label="快捷键">⌨️</button>
             </div>
             <div class="node-search-bar" id="nodeSearchBar" style="display:none;">
-                <input type="text" id="nodeSearchInput" class="node-search-input" placeholder="搜索节点..." oninput="app.ui.searchNodes(this.value)">
+                <input type="text" id="nodeSearchInput" class="node-search-input" placeholder="搜索节点...">
                 <span id="nodeSearchCount" class="node-search-count"></span>
                 <button class="node-search-btn" data-action="nodeSearchPrev" title="上一个">▲</button>
                 <button class="node-search-btn" data-action="nodeSearchNext" title="下一个">▼</button>
@@ -151,7 +152,7 @@
             <div class="form-group">
                 <label class="panel-label">资源类型</label>
                 <div class="select-wrapper">
-                    <select id="resType" class="form-input panel-select" onchange="app.ui.toggleResInput()">
+                    <select id="resType" class="form-input panel-select">
                         <option value="image">🖼️ 图片 (Image)</option>
                         <option value="md">📝 文档 (Markdown)</option>
                         <option value="code">💻 代码段 (Code)</option>
@@ -341,27 +342,5 @@
     </div>
 </div>
 
-<script>
-    if (window.innerWidth < 768) document.getElementById('sidebar').classList.add('closed');
-    else document.getElementById('sidebar').classList.remove('closed');
-
-    if(localStorage.getItem('theme') === 'dark') {
-        document.body.setAttribute('data-theme', 'dark');
-    }
-
-    if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-            let refreshing = false;
-            navigator.serviceWorker.addEventListener('controllerchange', () => {
-                if (refreshing) return;
-                refreshing = true;
-                window.location.reload();
-            });
-            navigator.serviceWorker.register('sw.js')
-                .then(registration => { console.log('SW Registered:', registration.scope); })
-                .catch(err => { console.log('SW Registration Failed:', err); });
-        });
-    }
-</script>
 </body>
 </html>

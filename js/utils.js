@@ -2,27 +2,24 @@ export const utils = {
     // 防抖函数：避免高频操作导致数据库写入卡顿
     debounce: (func, wait) => {
         let timeout;
-        return function(...args) {
+        const debounced = function(...args) {
             const context = this;
             clearTimeout(timeout);
             timeout = setTimeout(() => func.apply(context, args), wait);
         };
+        debounced.cancel = () => clearTimeout(timeout);
+        return debounced;
     },
 
     // HTML 清洗：防止 Markdown 渲染时的 XSS 攻击
+    // P0-6: DOMPurify 是硬依赖，移除了可绕过的正则后备
     purifyHTML: (html) => {
         if (!html) return '';
-        // 优先使用本地引入的 DOMPurify
-        if (window.DOMPurify) {
-            return window.DOMPurify.sanitize(html);
+        if (!window.DOMPurify) {
+            console.error('DOMPurify 未加载，无法安全清洗 HTML');
+            return ''; // 安全降级：返回空字符串而非未清洗的内容
         }
-        // 降级方案：剥离危险标签和事件处理器
-        console.warn('DOMPurify not loaded. Using fallback sanitization.');
-        return html
-            .replace(/<(script|iframe|object|embed|svg|math|style)\b[^>]*>[\s\S]*?<\/\1>/gim, "")
-            .replace(/<(script|iframe|object|embed|svg|math|style)\b[^>]*\/?>/gim, "")
-            .replace(/\bon\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "")
-            .replace(/javascript\s*:/gi, "");
+        return window.DOMPurify.sanitize(html);
     },
 
     // 简单的 HTML 转义（用于非 Markdown 文本）

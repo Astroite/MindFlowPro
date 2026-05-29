@@ -8,6 +8,7 @@ export class StorageModule {
     constructor(app) {
         this.app = app;
         this._isLoading = false;
+        this._saving = false;
         this._debouncedSave = this.app.utils.debounce(this.forceSave.bind(this), config.saveDebounceMs);
     }
 
@@ -21,14 +22,86 @@ export class StorageModule {
         };
     }
 
+    /**
+     * P0-5: 轻量级 Schema 校验 — 在 loadProject 中使用，检测损坏数据并优雅降级。
+     * 返回 { valid: boolean, errors: string[] }
+     */
+    _validateProject(proj) {
+        const errors = [];
+        if (!proj || typeof proj !== 'object') {
+            return { valid: false, errors: ['项目数据不是有效对象'] };
+        }
+        if (!Array.isArray(proj.nodes)) errors.push('nodes 不是数组');
+        if (!Array.isArray(proj.links)) errors.push('links 不是数组');
+        if (!Array.isArray(proj.resources)) errors.push('resources 不是数组');
+
+        // 校验节点基本结构
+        if (Array.isArray(proj.nodes)) {
+            for (let i = 0; i < proj.nodes.length; i++) {
+                const n = proj.nodes[i];
+                if (!n || typeof n !== 'object') { errors.push(`nodes[${i}] 无效`); continue; }
+                if (!n.id) errors.push(`nodes[${i}] 缺少 id`);
+                if (typeof n.x !== 'number' || typeof n.y !== 'number') errors.push(`nodes[${i}] 坐标无效`);
+            }
+        }
+
+        // 校验连线基本结构
+        if (Array.isArray(proj.links)) {
+            for (let i = 0; i < proj.links.length; i++) {
+                const l = proj.links[i];
+                if (!l || typeof l !== 'object') { errors.push(`links[${i}] 无效`); continue; }
+                if (!l.source || !l.target) errors.push(`links[${i}] 缺少 source/target`);
+            }
+        }
+
+        // 校验资源基本结构
+        if (Array.isArray(proj.resources)) {
+            for (let i = 0; i < proj.resources.length; i++) {
+                const r = proj.resources[i];
+                if (!r || typeof r !== 'object') { errors.push(`resources[${i}] 无效`); continue; }
+                if (!r.id) errors.push(`resources[${i}] 缺少 id`);
+            }
+        }
+
+        return { valid: errors.length === 0, errors };
+    }
+
     async init() {
         try {
             localforage.config({ name: config.dbName, storeName: config.storeName });
             await this.loadIndex();
+            this._bindSaveGuards();
         } catch (e) {
             console.error('存储初始化失败:', e);
             this.app.ui.toast('存储系统初始化失败，请检查浏览器设置');
         }
+    }
+
+    /** P0-1/2: 页面关闭或标签页隐藏时强制保存，防止数据丢失 */
+    _bindSaveGuards() {
+        window.addEventListener('beforeunload', () => {
+            if (this.app.state.isDirty && this.app.state.currentId) {
+                this._syncSave();
+            }
+        });
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden' && this.app.state.isDirty && this.app.state.currentId) {
+                this._syncSave();
+            }
+        });
+    }
+
+    /**
+     * 同步保存 — 用 navigator.sendBeacon 将数据发到一个假 URL 不可行（IndexedDB 是异步的），
+     * 所以我们取消 debounce 立即触发 forceSave，并祈祷浏览器在页面卸载前完成 IndexedDB 写入。
+     * 现代浏览器（Chrome 120+、Firefox 115+）在 beforeunload 中会等待 microtask 完成。
+     */
+    _syncSave() {
+        if (this._isLoading) return;
+        // 取消 debounce 定时器，避免重复
+        if (this._debouncedSave?.cancel) this._debouncedSave.cancel();
+        // fire-and-forget：IndexedDB 写入在 beforeunload 中仍可能完成
+        this.forceSave();
     }
 
     async loadIndex() {
@@ -144,6 +217,14 @@ export class StorageModule {
                 throw new Error('项目数据丢失');
             }
 
+            // P0-5: Schema 校验 — 检测损坏数据
+            const validation = this._validateProject(proj);
+            if (!validation.valid) {
+                console.error('项目数据校验失败:', validation.errors);
+                this.app.ui.toast('项目数据已损坏: ' + validation.errors[0], 'error');
+                // 仍然尝试加载（降级），让 normalize 逻辑修复能修复的部分
+            }
+
             // Undo/redo and clipboard are scoped to a single project — wipe them
             // so commands from the previous project cannot corrupt this one.
             this.app.state.undoStack = [];
@@ -221,7 +302,9 @@ export class StorageModule {
     async forceSave() {
         if (!this.app.state.currentId) return this.app.ui.toast('请先创建或选择项目');
         if (this._isLoading) return;
+        if (this._saving) return; // P0-3: 防止并发写入
 
+        this._saving = true;
         this.app.ui.updateSaveStatus('保存中...');
         const currentProjName = this.app.dom.projTitleInput.value || '未命名项目';
 
@@ -253,6 +336,8 @@ export class StorageModule {
             console.error(e);
             const msg = (e.name === 'QuotaExceededError') ? '保存失败: 浏览器存储空间已满，请删除部分项目' : '保存失败: ' + (e.message || '未知错误');
             this.app.ui.toast(msg);
+        } finally {
+            this._saving = false;
         }
     }
 
@@ -262,8 +347,7 @@ export class StorageModule {
         const nodes = Array.isArray(projData.nodes) ? projData.nodes : [];
         const links = Array.isArray(projData.links) ? projData.links : [];
         const resources = Array.isArray(projData.resources) ? projData.resources : [];
-        // 限制资源内容大小（单个 10MB）
-        const MAX_RES_SIZE = 10 * 1024 * 1024;
+        const MAX_RES_SIZE = config.maxResourceSize;
         for (const r of resources) {
             if (r && typeof r.content === 'string' && r.content.length > MAX_RES_SIZE) {
                 throw new Error(`资源 "${r.name || r.id}" 内容超过 10MB 限制`);

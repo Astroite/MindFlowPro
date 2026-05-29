@@ -1,5 +1,5 @@
 export const config = {
-    appVersion: '4.9.1',
+    appVersion: '4.15.0',
     nodeRadius: 40,
     subRadius: 30,
     linkDistance: 150,
@@ -82,6 +82,32 @@ export const config = {
         '4:3':  { w: 120, h: 90  },
         '16:9': { w: 128, h: 72  }
     },
+    // Bezier cross-link rendering
+    bezierOffsetFactor: 0.2,    // curve offset = dist * this
+    bezierMaxOffset: 150,       // max curve offset (px)
+    bezierSampleMin: 10,        // min hit-test sample points
+    bezierSampleMax: 200,       // max hit-test sample points
+
+    // Minimap
+    minimapWidth: 160,
+    minimapHeight: 100,
+    minimapPadding: 12,
+
+    // Export
+    exportMaxSize: 16384,       // max export canvas dimension (px)
+    exportPadding: 50,          // export canvas padding (px)
+    maxResourceSize: 10 * 1024 * 1024, // per-resource content limit (10MB)
+
+    // Node visibility
+    visNodePadding: 100,        // off-screen culling padding (px)
+
+    // Canvas fonts
+    fontBold: '600 18px "Segoe UI", sans-serif',
+    fontNormal: '14px "Segoe UI", sans-serif',
+
+    // Camera animation
+    cameraAnimDuration: 300,    // search-result pan animation (ms)
+
     colorsDark: {
         primary: '#818cf8',
         surface: '#27272a',

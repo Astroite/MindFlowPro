@@ -56,12 +56,13 @@ export class NodeEditor {
         document.getElementById('nodeColorReset').addEventListener('click', () => {
             this._colorReset = true;
             this._colorChanged = false;
-            const isDark = document.body.getAttribute('data-theme') === 'dark';
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
             document.getElementById('nodeColor').value = isDark ? '#818cf8' : '#6366f1';
         });
     }
 
     handleSaveNodeEdit() {
+        this._releaseFocus();
         const node = this.app.state.editingNode;
         if (node) {
             const label = document.getElementById('nodeLabel').value;
@@ -97,7 +98,7 @@ export class NodeEditor {
         this._colorChanged = false;
         this._colorReset = false;
         const colorInput = document.getElementById('nodeColor');
-        const isDark = document.body.getAttribute('data-theme') === 'dark';
+        const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
         if (colorInput) colorInput.value = node.color || (isDark ? '#818cf8' : '#6366f1');
 
         // Note
@@ -150,6 +151,38 @@ export class NodeEditor {
             m.style.top = top + 'px';
         }
         m.style.display = 'flex';
+        this._trapFocus(m);
+    }
+
+    _trapFocus(panel) {
+        this._releaseFocus();
+        const focusable = panel.querySelectorAll('input, select, textarea, button, [tabindex]:not([tabindex="-1"])');
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+
+        this._focusTrapHandler = (e) => {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                this.handleSaveNodeEdit();
+                return;
+            }
+            if (e.key !== 'Tab') return;
+            if (e.shiftKey) {
+                if (document.activeElement === first) { e.preventDefault(); last.focus(); }
+            } else {
+                if (document.activeElement === last) { e.preventDefault(); first.focus(); }
+            }
+        };
+        document.addEventListener('keydown', this._focusTrapHandler);
+        first.focus();
+    }
+
+    _releaseFocus() {
+        if (this._focusTrapHandler) {
+            document.removeEventListener('keydown', this._focusTrapHandler);
+            this._focusTrapHandler = null;
+        }
     }
 
     showNodeBubble(node) {

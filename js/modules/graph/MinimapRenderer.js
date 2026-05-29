@@ -1,3 +1,5 @@
+import { config } from '../../config.js';
+
 export class MinimapRenderer {
     constructor(app) {
         this.app = app;
@@ -7,6 +9,29 @@ export class MinimapRenderer {
     }
 
     markDirty() { this._minimapDirty = true; }
+
+    _computeNodeBounds(nodes) {
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        nodes.forEach(n => {
+            if (n.x < minX) minX = n.x;
+            if (n.x > maxX) maxX = n.x;
+            if (n.y < minY) minY = n.y;
+            if (n.y > maxY) maxY = n.y;
+        });
+        return { minX, minY, maxX, maxY };
+    }
+
+    _computeMinimapParams(nodes, mmW, mmH, innerPad) {
+        const { minX, minY, maxX, maxY } = this._computeNodeBounds(nodes);
+        const rangeX = maxX - minX || 1;
+        const rangeY = maxY - minY || 1;
+        const drawW = mmW - innerPad * 2;
+        const drawH = mmH - innerPad * 2;
+        const scale = Math.min(drawW / rangeX, drawH / rangeY);
+        const ox = innerPad + (drawW - rangeX * scale) / 2;
+        const oy = innerPad + (drawH - rangeY * scale) / 2;
+        return { minX, minY, rangeX, rangeY, scale, ox, oy };
+    }
 
     _renderOffscreen(nodes, mmW, mmH, innerPad, isDark) {
         if (!this._offscreen) {
@@ -26,21 +51,7 @@ export class MinimapRenderer {
 
         if (nodes.length === 0) return { rangeX: 1, rangeY: 1, minX: 0, minY: 0 };
 
-        // Compute world bounds
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        nodes.forEach(n => {
-            if (n.x < minX) minX = n.x;
-            if (n.x > maxX) maxX = n.x;
-            if (n.y < minY) minY = n.y;
-            if (n.y > maxY) maxY = n.y;
-        });
-        const rangeX = maxX - minX || 1;
-        const rangeY = maxY - minY || 1;
-        const drawW = mmW - innerPad * 2;
-        const drawH = mmH - innerPad * 2;
-        const scale = Math.min(drawW / rangeX, drawH / rangeY);
-        const ox = innerPad + (drawW - rangeX * scale) / 2;
-        const oy = innerPad + (drawH - rangeY * scale) / 2;
+        const { minX, minY, rangeX, rangeY, scale, ox, oy } = this._computeMinimapParams(nodes, mmW, mmH, innerPad);
 
         // Clip
         octx.save();
@@ -66,12 +77,12 @@ export class MinimapRenderer {
         const nodes = this.app.state.nodes.filter(n => !isNaN(n.x) && !isNaN(n.y) && !n._deleting);
         if (nodes.length === 0) return;
 
-        const mmW = 160, mmH = 100, pad = 12;
+        const mmW = config.minimapWidth, mmH = config.minimapHeight, pad = config.minimapPadding;
         const mmX = width - mmW - pad;
         const mmY = height - mmH - pad;
         const innerPad = 6;
 
-        const isDark = document.body.getAttribute('data-theme') === 'dark';
+        const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
 
         // Only re-render node dots when data changed
         let bounds;
@@ -79,22 +90,8 @@ export class MinimapRenderer {
             bounds = this._renderOffscreen(nodes, mmW, mmH, innerPad, isDark);
             this._minimapDirty = false;
         } else {
-            // Recompute bounds for viewport mapping (cheap vs re-rendering dots)
-            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-            nodes.forEach(n => {
-                if (n.x < minX) minX = n.x;
-                if (n.x > maxX) maxX = n.x;
-                if (n.y < minY) minY = n.y;
-                if (n.y > maxY) maxY = n.y;
-            });
-            const rangeX = maxX - minX || 1;
-            const rangeY = maxY - minY || 1;
-            const drawW = mmW - innerPad * 2;
-            const drawH = mmH - innerPad * 2;
-            const scale = Math.min(drawW / rangeX, drawH / rangeY);
-            const ox = innerPad + (drawW - rangeX * scale) / 2;
-            const oy = innerPad + (drawH - rangeY * scale) / 2;
-            bounds = { minX, minY, scale, ox, oy };
+            const p = this._computeMinimapParams(nodes, mmW, mmH, innerPad);
+            bounds = { minX: p.minX, minY: p.minY, scale: p.scale, ox: p.ox, oy: p.oy };
         }
 
         // Blit cached offscreen

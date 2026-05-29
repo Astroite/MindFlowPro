@@ -68,54 +68,66 @@ const app = {
     },
 
     init: async function() {
-        console.log("MindFlow initializing...");
+        try {
+            // P0-6: 检查关键依赖是否加载
+            if (!window.DOMPurify) {
+                console.error('DOMPurify 未加载 — XSS 防护不可用');
+                // 不阻断启动，但 purifyHTML 会降级为空字符串
+            }
 
-        // 1. 初始化 DOM 引用
-        this.dom = {
-            resList: document.getElementById('resList'),
-            projSelect: document.getElementById('projSelect'),
-            projTitleInput: document.getElementById('projTitleInput'),
-            saveStatus: document.getElementById('saveStatus'),
-            canvasWrapper: document.getElementById('canvasWrapper'),
-            mainCanvas: document.getElementById('mainCanvas'),
-            nodeMenu: document.getElementById('nodeMenu'),
-            nodeBubble: document.getElementById('nodeBubble'),
-            toastContainer: document.getElementById('toastContainer')
-        };
+            // 1. 初始化 DOM 引用
+            this.dom = {
+                resList: document.getElementById('resList'),
+                projSelect: document.getElementById('projSelect'),
+                projTitleInput: document.getElementById('projTitleInput'),
+                saveStatus: document.getElementById('saveStatus'),
+                canvasWrapper: document.getElementById('canvasWrapper'),
+                mainCanvas: document.getElementById('mainCanvas'),
+                nodeMenu: document.getElementById('nodeMenu'),
+                nodeBubble: document.getElementById('nodeBubble'),
+                toastContainer: document.getElementById('toastContainer')
+            };
 
-        // 2. 实例化核心模块
-        this.eventBus = new EventBus();
+            // 2. 实例化核心模块
+            this.eventBus = new EventBus();
 
-        // 注入 this (app) 到所有模块，实现简单的依赖注入
-        // @ts-ignore - 初始化时允许传尚未完全构建的 app
-        this.storage = new StorageModule(this);
-        // @ts-ignore
-        this.graph = new GraphModule(this);
-        // @ts-ignore
-        this.data = new DataModule(this);
-        // @ts-ignore
-        this.ui = new UIModule(this);
+            // 注入 this (app) 到所有模块，实现简单的依赖注入
+            // @ts-ignore - 初始化时允许传尚未完全构建的 app
+            this.storage = new StorageModule(this);
+            // @ts-ignore
+            this.graph = new GraphModule(this);
+            // @ts-ignore
+            this.data = new DataModule(this);
+            // @ts-ignore
+            this.ui = new UIModule(this);
 
-        // 3. 模块初始化
-        // 顺序很重要：UI 绑定事件 -> Storage 加载数据 -> Graph 准备渲染
-        await this.ui.init();
-        await this.storage.init();
-        await this.graph.init();
+            // 3. 模块初始化
+            // 顺序很重要：UI 绑定事件 -> Storage 加载数据 -> Graph 准备渲染
+            await this.ui.init();
+            await this.storage.init();
+            await this.graph.init();
 
-        // [新增] 自动加载上次打开的项目
-        const lastProjId = this.storage.getLastOpenedProjectId();
-        if (lastProjId) {
-            // 检查该 ID 是否依然在索引中存在（防止已被删除）
-            const exists = this.state.projectsIndex.some(p => p.id === lastProjId);
-            if (exists) {
-                await this.storage.loadProject(lastProjId);
-                console.log("Auto-loaded project:", lastProjId);
-            } else {
-                localStorage.removeItem('lastOpenedProjectId');
+            // 自动加载上次打开的项目
+            const lastProjId = this.storage.getLastOpenedProjectId();
+            if (lastProjId) {
+                const exists = this.state.projectsIndex.some(p => p.id === lastProjId);
+                if (exists) {
+                    await this.storage.loadProject(lastProjId);
+                } else {
+                    localStorage.removeItem('lastOpenedProjectId');
+                }
+            }
+        } catch (e) {
+            console.error('MindFlow 初始化失败:', e);
+            // 尝试向用户展示错误（此时 ui 模块可能尚未就绪）
+            const container = document.getElementById('toastContainer');
+            if (container) {
+                const toast = document.createElement('div');
+                toast.className = 'toast error';
+                toast.textContent = '应用初始化失败，请刷新页面重试';
+                container.appendChild(toast);
             }
         }
-
-        console.log("MindFlow Ready.");
     }
 };
 

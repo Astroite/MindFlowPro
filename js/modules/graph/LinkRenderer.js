@@ -5,6 +5,24 @@ export class LinkRenderer {
         this.app = app;
     }
 
+    /**
+     * 计算两点之间的贝塞尔曲线控制点（中垂线偏移法）
+     * @returns {{ cpX: number, cpY: number, dist: number }}
+     */
+    getBezierControlPoint(s, t) {
+        const dx = t.x - s.x;
+        const dy = t.y - s.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const offset = Math.min(dist * config.bezierOffsetFactor, config.bezierMaxOffset);
+        const nx = -dy / dist;
+        const ny = dx / dist;
+        return {
+            cpX: (s.x + t.x) / 2 + nx * offset,
+            cpY: (s.y + t.y) / 2 + ny * offset,
+            dist
+        };
+    }
+
     drawLink(ctx, link) {
         if (link.type === 'cross' && !this.app.state.showCrossLinks) return;
 
@@ -20,7 +38,7 @@ export class LinkRenderer {
                 ctx.save();
 
                 // 关联节点选中或连线本身选中时，飞线变实
-                const isDark = document.body.getAttribute('data-theme') === 'dark';
+                const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
                 const isHighlight = isSelected || this.app.state.selectedNodes.has(s.id) || this.app.state.selectedNodes.has(t.id);
 
                 // 高亮时使用强调色，否则继承当前 ctx 颜色（通常是灰色）
@@ -36,22 +54,7 @@ export class LinkRenderer {
                 ctx.setLineDash(isHighlight ? [5, 3] : [3, 5]); // 高亮实线，普通虚线
                 ctx.globalAlpha = isHighlight ? 0.8 : 0.4;
 
-                // --- 计算贝塞尔曲线控制点 ---
-                // 简单的策略：控制点位于两点连线的中垂线上，偏离距离与连线长度成正比
-                const dx = t.x - s.x;
-                const dy = t.y - s.y;
-                const dist = Math.sqrt(dx*dx + dy*dy);
-
-                // 偏移系数，距离越远弧度越明显，但有上限
-                const offset = Math.min(dist * 0.2, 150);
-
-                // 计算法向量 (-dy, dx) 并归一化
-                const nx = -dy / dist;
-                const ny = dx / dist;
-
-                // 控制点 (Control Point)
-                const cpX = (s.x + t.x) / 2 + nx * offset;
-                const cpY = (s.y + t.y) / 2 + ny * offset;
+                const { cpX, cpY } = this.getBezierControlPoint(s, t);
 
                 ctx.moveTo(s.x, s.y);
                 ctx.quadraticCurveTo(cpX, cpY, t.x, t.y);
@@ -137,18 +140,10 @@ export class LinkRenderer {
             let dist = Infinity;
 
             if (link.type === 'cross') {
-                // [修正] 贝塞尔曲线点击检测 (采样法)
-                const dx = t.x - s.x;
-                const dy = t.y - s.y;
-                const len = Math.sqrt(dx*dx + dy*dy);
-                const offset = Math.min(len * 0.2, 150);
-                const nx = -dy / len;
-                const ny = dx / len;
-                const cpX = (s.x + t.x) / 2 + nx * offset;
-                const cpY = (s.y + t.y) / 2 + ny * offset;
+                const { cpX, cpY, dist: len } = this.getBezierControlPoint(s, t);
 
                 let steps = Math.ceil((len * camK) / 10);
-                steps = Math.max(10, Math.min(steps, 200));
+                steps = Math.max(config.bezierSampleMin, Math.min(steps, config.bezierSampleMax));
 
                 for (let i = 0; i <= steps; i++) {
                     const stepT = i / steps;

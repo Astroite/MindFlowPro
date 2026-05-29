@@ -23,7 +23,7 @@ export class TooltipManager {
 
     _updateTooltipTheme() {
         if (!this.tooltipEl) return;
-        const isDark = document.body.getAttribute('data-theme') === 'dark';
+        const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
         if (isDark) {
             this.tooltipEl.style.background = '#27272a';
             this.tooltipEl.style.border = '1px solid #3f3f46';
@@ -45,7 +45,7 @@ export class TooltipManager {
         if (!res) return;
 
         this._updateTooltipTheme();
-        const isDark = document.body.getAttribute('data-theme') === 'dark';
+        const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
 
         let content = '';
         if (res.type === 'image') {
@@ -82,12 +82,17 @@ export class TooltipManager {
 
         this.tooltipEl.innerHTML = content;
         this.tooltipEl.style.display = 'block';
+        this._positionTooltip(x, y);
+    }
 
-        const pad = 15; let top = y + pad; let left = x + pad;
+    _positionTooltip(x, y) {
+        const pad = 15;
+        let top = y + pad, left = x + pad;
         const rect = this.tooltipEl.getBoundingClientRect();
         if (left + rect.width > window.innerWidth) left = x - rect.width - pad;
         if (top + rect.height > window.innerHeight) top = y - rect.height - pad;
-        this.tooltipEl.style.top = top + 'px'; this.tooltipEl.style.left = left + 'px';
+        this.tooltipEl.style.top = top + 'px';
+        this.tooltipEl.style.left = left + 'px';
     }
 
     hideTooltip() {
@@ -112,12 +117,6 @@ export class TooltipManager {
         clearTimeout(this.app.state.tooltipTimer);
         this.tooltipEl.innerHTML = `<div style="font-size:13px;line-height:1.6;white-space:pre-wrap;max-width:260px;">${this.app.utils.escapeHtml(note)}</div>`;
         this.tooltipEl.style.display = 'block';
-        const pad = 15;
-        let top = y + pad, left = x + pad;
-        const rect = this.tooltipEl.getBoundingClientRect();
-        if (left + rect.width > window.innerWidth) left = x - rect.width - pad;
-        if (top + rect.height > window.innerHeight) top = y - rect.height - pad;
-        this.tooltipEl.style.top = top + 'px';
-        this.tooltipEl.style.left = left + 'px';
+        this._positionTooltip(x, y);
     }
 }

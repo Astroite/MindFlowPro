@@ -1,3 +1,5 @@
+import { config } from '../../config.js';
+
 export class NodeSearch {
     constructor(app) {
         this.app = app;
@@ -100,7 +102,7 @@ export class NodeSearch {
     _animateCamera(targetX, targetY, targetK) {
         const cam = this.app.state.camera;
         const startX = cam.x, startY = cam.y;
-        const duration = 300;
+        const duration = config.cameraAnimDuration;
         const start = performance.now();
         const step = (now) => {
             const t = Math.min(1, (now - start) / duration);

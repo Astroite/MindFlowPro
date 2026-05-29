@@ -578,25 +578,27 @@ export class UIModule {
 
     // --- Resource CRUD ---
 
-    handleCreateFolder(parentId = null) {
+    async handleCreateFolder(parentId = null) {
         if(!this.app.state.currentId) return this.toast('请先创建项目');
-        this.promptUser('新建文件夹', '输入文件夹名称').then(name => {
+        try {
+            const name = await this.promptUser('新建文件夹', '输入文件夹名称');
             if(name) this.app.data.createFolder(name, parentId);
-        }).catch(err => {
+        } catch (err) {
             console.error('创建文件夹失败:', err);
             this.toast('创建文件夹失败', 'error');
-        });
+        }
     }
 
-    handleRenameFolder(id) {
+    async handleRenameFolder(id) {
         const folder = this.app.state.resources.find(r => r.id === id);
         if (!folder) return;
-        this.promptUser('重命名', '输入新名称', folder.name).then(newName => {
+        try {
+            const newName = await this.promptUser('重命名', '输入新名称', folder.name);
             if (newName) this.app.data.renameFolder(id, newName);
-        }).catch(err => {
+        } catch (err) {
             console.error('重命名失败:', err);
             this.toast('重命名失败', 'error');
-        });
+        }
     }
 
     async handleDeleteResource(id) {
@@ -833,12 +835,12 @@ export class UIModule {
     // --- Theme ---
 
     toggleTheme() {
-        const body = document.body;
-        if (body.hasAttribute('data-theme')) {
-            body.removeAttribute('data-theme');
+        const root = document.documentElement;
+        if (root.hasAttribute('data-theme')) {
+            root.removeAttribute('data-theme');
             localStorage.setItem('theme', 'light');
         } else {
-            body.setAttribute('data-theme', 'dark');
+            root.setAttribute('data-theme', 'dark');
             localStorage.setItem('theme', 'dark');
         }
         this.tooltipManager._updateTooltipTheme();
@@ -974,26 +976,6 @@ export class UIModule {
             e.target.classList.remove('dragging');
             this.app.state.draggedResId = null;
         }, { once: true });
-    }
-
-    dragOver(e, parentId) {
-        e.preventDefault(); e.stopPropagation();
-        const target = e.currentTarget;
-        if (!target.classList.contains('drag-over')) {
-            document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
-            target.classList.add('drag-over');
-        }
-        e.dataTransfer.dropEffect = 'move';
-    }
-
-    dragLeave(e) { e.currentTarget.classList.remove('drag-over'); }
-
-    drop(e, parentId) {
-        e.preventDefault(); e.stopPropagation(); e.currentTarget.classList.remove('drag-over');
-        const resId = e.dataTransfer.getData('text/plain');
-        if (resId) this.app.data.moveResource(resId, parentId);
-        const dragged = document.querySelector('.dragging'); if(dragged) dragged.classList.remove('dragging');
-        this.app.state.draggedResId = null;
     }
 
     // --- Toast ---

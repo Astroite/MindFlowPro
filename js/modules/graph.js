@@ -31,6 +31,11 @@ export class GraphModule {
         // [P2-5] Minimap
         this.showMinimap = false;
 
+        // [P1-11] Cached lookup maps (invalidated on data changes)
+        this._cachedResourceMap = new Map();
+        this._cachedNodeMap = new Map();
+        this._lookupDirty = true;
+
         // Sub-modules
         this.nodeRenderer = new NodeRenderer(app);
         this.linkRenderer = new LinkRenderer(app);
@@ -68,6 +73,10 @@ export class GraphModule {
             .force("x", d3.forceX(0).strength(config.centerForceStrength))
             .force("y", d3.forceY(0).strength(config.centerForceStrength))
             .on("tick", () => { this.needsRender = true; });
+
+        // P1-11: 数据变更时标记查找缓存失效
+        this.app.eventBus.on('resources:updated', () => { this._lookupDirty = true; });
+        this.app.eventBus.on('nodes:deleted', () => { this._lookupDirty = true; });
 
         this.bindEvents();
         this.resize();
@@ -117,7 +126,7 @@ export class GraphModule {
         this.minimapRenderer.markDirty();
     }
 
-    isNodeVisible(node, padding = 100) {
+    isNodeVisible(node, padding = config.visNodePadding) {
         if (isNaN(node.x) || isNaN(node.y)) return false;
 
         const cam = this.app.state.camera;
@@ -189,23 +198,43 @@ export class GraphModule {
         ctx.translate(cam.x, cam.y);
         ctx.scale(cam.k, cam.k);
 
-        const isDark = document.body.getAttribute('data-theme') === 'dark';
+        const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
         const linkColor = isDark && config.colorsDark ? config.colorsDark.link : config.colors.link;
+
+        this._refreshLookupMaps();
+        this._drawLinks(ctx, linkColor);
+        this.linkRenderer.drawDragLink(ctx, this.mousePos);
+        this._drawNodes(ctx, isDark);
+        this._updateAnimations();
+        this._drawEmptyState(ctx, dpr, isDark);
+        this._drawSelectionRect(ctx, dpr);
+
+        if (this.showMinimap && this.app.state.nodes.length > 0) {
+            this.minimapRenderer.drawMinimap(ctx, this.width, this.height);
+        }
+
+        ctx.restore();
+        this.app.ui.updateBubblePosition();
+        requestAnimationFrame(() => this.renderLoop());
+    }
+
+    _refreshLookupMaps() {
+        if (this._lookupDirty) {
+            this._cachedNodeMap = new Map(this.app.state.nodes.map(n => [n.id, n]));
+            this._cachedResourceMap = new Map(this.app.state.resources.map(r => [r.id, r]));
+            this._lookupDirty = false;
+        }
+        this.nodeRenderer._resourceMap = this._cachedResourceMap;
+    }
+
+    _drawLinks(ctx, linkColor) {
         ctx.lineWidth = config.linkLineWidth;
-
-        // Build node lookup map for O(1) access
-        const nodeMap = new Map(this.app.state.nodes.map(n => [n.id, n]));
-
-        // Build resource lookup map for O(1) access (avoids Array.find per node per frame)
-        this.nodeRenderer._resourceMap = new Map(this.app.state.resources.map(r => [r.id, r]));
-
-        // 绘制连线
+        const nodeMap = this._cachedNodeMap;
         this.app.state.links.forEach(l => {
             const sId = DataModule.linkEnd(l, 'source');
             const tId = DataModule.linkEnd(l, 'target');
             const s = typeof l.source === 'object' ? l.source : nodeMap.get(sId);
             const t = typeof l.target === 'object' ? l.target : nodeMap.get(tId);
-
             if (s && t && !isNaN(s.x) && !isNaN(s.y) && !isNaN(t.x) && !isNaN(t.y)) {
                 if (this.isNodeVisible(s, config.visPadding) || this.isNodeVisible(t, config.visPadding)) {
                     if (typeof l.source === 'object' && typeof l.target === 'object') {
@@ -215,18 +244,18 @@ export class GraphModule {
                 }
             }
         });
+    }
 
-        this.linkRenderer.drawDragLink(ctx, this.mousePos);
-
+    _drawNodes(ctx, isDark) {
         this.app.state.nodes.forEach(n => {
             if (isNaN(n.x) || isNaN(n.y)) return;
             if (!this.isNodeVisible(n)) return;
-
             this.nodeRenderer.drawNode(ctx, n, isDark);
             if (!n._deleting) this.nodeRenderer.drawPlusButton(ctx, n);
         });
+    }
 
-        // Update animating flag for next frame
+    _updateAnimations() {
         this._hasAnimatingNodes = false;
         for (let i = 0; i < this.app.state.nodes.length; i++) {
             if (this.app.state.nodes[i].scale < 1 || this.app.state.nodes[i]._deleting) {
@@ -234,14 +263,10 @@ export class GraphModule {
                 break;
             }
         }
-
-        // [P0-4] Remove nodes that finished delete animation
         const toRemove = this.app.state.nodes.filter(n => n._removeNow);
         if (toRemove.length > 0) {
             const removeIds = toRemove.map(n => n.id);
             this.app.state.nodes = this.app.state.nodes.filter(n => !n._removeNow);
-            // Links were already pruned synchronously in deleteNodes; this catches
-            // any stragglers (e.g. links added between deleteNodes and animation end).
             this.app.state.links = this.app.state.links.filter(l => {
                 const sId = DataModule.linkEnd(l, 'source');
                 const tId = DataModule.linkEnd(l, 'target');
@@ -250,50 +275,41 @@ export class GraphModule {
             this.updateSimulation();
             this.app.storage.triggerSave();
         }
+    }
 
-        // [P1-1] Empty state guidance
-        if (this.app.state.nodes.length === 0) {
-            ctx.save();
-            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-            const cx = this.width / 2;
-            const cy = this.height / 2;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillStyle = isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.15)';
-            ctx.font = '600 18px "Segoe UI", sans-serif';
-            ctx.fillText('点击   根节点 创建第一个节点', cx, cy - 14);
-            ctx.font = '14px "Segoe UI", sans-serif';
-            ctx.fillText('拖拽侧边栏资源到画布快速创建节点', cx, cy + 16);
-            ctx.restore();
-        }
-
-        // [P1-2] Draw selection rectangle
-        if (this.selectionRect) {
-            ctx.save();
-            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-            const { startX, startY, endX, endY } = this.selectionRect;
-            const x = Math.min(startX, endX);
-            const y = Math.min(startY, endY);
-            const w = Math.abs(endX - startX);
-            const h = Math.abs(endY - startY);
-            ctx.fillStyle = 'rgba(99, 102, 241, 0.1)';
-            ctx.strokeStyle = 'rgba(99, 102, 241, 0.6)';
-            ctx.lineWidth = 1;
-            ctx.setLineDash([4, 4]);
-            ctx.fillRect(x, y, w, h);
-            ctx.strokeRect(x, y, w, h);
-            ctx.setLineDash([]);
-            ctx.restore();
-        }
-
-        // [P2-5] Draw minimap
-        if (this.showMinimap && this.app.state.nodes.length > 0) {
-            this.minimapRenderer.drawMinimap(ctx, this.width, this.height);
-        }
-
+    _drawEmptyState(ctx, dpr, isDark) {
+        if (this.app.state.nodes.length !== 0) return;
+        ctx.save();
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        const cx = this.width / 2;
+        const cy = this.height / 2;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.15)';
+        ctx.font = config.fontBold;
+        ctx.fillText('点击   根节点 创建第一个节点', cx, cy - 14);
+        ctx.font = config.fontNormal;
+        ctx.fillText('拖拽侧边栏资源到画布快速创建节点', cx, cy + 16);
         ctx.restore();
-        this.app.ui.updateBubblePosition();
-        requestAnimationFrame(() => this.renderLoop());
+    }
+
+    _drawSelectionRect(ctx, dpr) {
+        if (!this.selectionRect) return;
+        ctx.save();
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        const { startX, startY, endX, endY } = this.selectionRect;
+        const x = Math.min(startX, endX);
+        const y = Math.min(startY, endY);
+        const w = Math.abs(endX - startX);
+        const h = Math.abs(endY - startY);
+        ctx.fillStyle = 'rgba(99, 102, 241, 0.1)';
+        ctx.strokeStyle = 'rgba(99, 102, 241, 0.6)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
+        ctx.fillRect(x, y, w, h);
+        ctx.strokeRect(x, y, w, h);
+        ctx.setLineDash([]);
+        ctx.restore();
     }
     _createNode({ type = 'root', x, y, label = '新节点', scale, resId }) {
         const id = config.idPrefix.node + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
@@ -393,24 +409,30 @@ export class GraphModule {
         input.addEventListener('keydown', onKey);
     }
 
+    _getEventPos(e) {
+        const rect = this.canvas.getBoundingClientRect();
+        const k = this.app.state.camera.k;
+        const cx = e.touches ? e.touches[0].clientX : e.clientX;
+        const cy = e.touches ? e.touches[0].clientY : e.clientY;
+        this.mousePos = { x: cx - rect.left, y: cy - rect.top };
+        return { x: (cx - rect.left - this.app.state.camera.x) / k, y: (cy - rect.top - this.app.state.camera.y) / k, rawX: cx, rawY: cy };
+    }
+
     bindEvents() {
         const canvas = this.canvas;
-        const getPos = (e) => {
-            const rect = canvas.getBoundingClientRect();
-            const k = this.app.state.camera.k;
-            const cx = e.touches ? e.touches[0].clientX : e.clientX;
-            const cy = e.touches ? e.touches[0].clientY : e.clientY;
-            this.mousePos = { x: cx - rect.left, y: cy - rect.top };
-            return { x: (cx - rect.left - this.app.state.camera.x) / k, y: (cy - rect.top - this.app.state.camera.y) / k, rawX: cx, rawY: cy };
-        };
+        this._bindDragDrop();
+        this._bindKeyboard();
+        this._bindPointerEvents();
+    }
 
+    _bindDragDrop() {
+        const canvas = this.canvas;
         canvas.addEventListener('dragover', (e) => { e.preventDefault(); });
-        // [Feature 5] Drag resource to empty canvas → create new node
         canvas.addEventListener('drop', (e) => {
             e.preventDefault();
             const resId = e.dataTransfer.getData('text/plain');
             if (!resId) return;
-            const m = getPos(e);
+            const m = this._getEventPos(e);
             const hitNode = this.app.state.nodes.find(n => n.layout==='card' ? this.hitTestCard(m.x, m.y, n) : this.hitTestNode(m.x, m.y, n));
             if (hitNode) {
                 const beforeResId = hitNode.resId;
@@ -436,18 +458,47 @@ export class GraphModule {
                 this.app.ui.toast('已从资源创建节点');
             }
         });
+    }
 
-        window.addEventListener('keydown', (e) => {
+    _bindKeyboard() {
+        window.addEventListener('keydown', async (e) => {
             if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
+
+            // P2-15: 方向键导航 — 在节点间移动选择
+            if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+                e.preventDefault();
+                this._navigateNode(e.key);
+                return;
+            }
+
+            // P2-15: Tab 循环选择节点
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                this._cycleNode(e.shiftKey ? -1 : 1);
+                return;
+            }
+
+            // P2-15: Enter 编辑选中节点
+            if (e.key === 'Enter') {
+                const sel = this.app.state.selectedNodes;
+                if (sel.size === 1) {
+                    const node = this.app.state.nodes.find(n => n.id === [...sel][0]);
+                    if (node) {
+                        this.app.ui.showNodeBubble(node);
+                        this.app.ui.nodeEditor.onBubbleEdit();
+                    }
+                }
+                return;
+            }
+
             if (e.key === 'Delete' || e.key === 'Backspace') {
                 if (this.dragSubject) return;
                 if (this.app.state.selectedNodes.size > 0) {
                     this.app.ui.onBubbleDelete();
                 }
                 else if (this.app.state.selectedLink) {
-                    this.app.ui.confirmDialog('删除这条飞线？').then(confirmed => {
-                        if (confirmed) this.app.data.deleteLink(this.app.state.selectedLink);
-                    });
+                    const confirmed = await this.app.ui.confirmDialog('删除这条飞线？');
+                    if (confirmed) this.app.data.deleteLink(this.app.state.selectedLink);
                 }
             }
             if (e.key === 'Escape' && this.app.state.isLinking) {
@@ -456,6 +507,84 @@ export class GraphModule {
                 this.app.ui.toast('已取消连线');
             }
         });
+    }
+
+    /** P2-15: 方向键导航到最近的节点 */
+    _navigateNode(key) {
+        const nodes = this.app.state.nodes;
+        if (nodes.length === 0) return;
+
+        const sel = this.app.state.selectedNodes;
+        let current = null;
+        if (sel.size === 1) {
+            current = nodes.find(n => n.id === [...sel][0]);
+        }
+        if (!current) {
+            // 无选中时选择第一个节点
+            this._selectNode(nodes[0]);
+            return;
+        }
+
+        const isVertical = key === 'ArrowUp' || key === 'ArrowDown';
+        const isPositive = key === 'ArrowDown' || key === 'ArrowRight';
+        let best = null;
+        let bestScore = Infinity;
+
+        for (const n of nodes) {
+            if (n.id === current.id || isNaN(n.x) || isNaN(n.y)) continue;
+            const dx = n.x - current.x;
+            const dy = n.y - current.y;
+
+            // 只考虑正确方向的节点
+            if (isVertical) {
+                if (!isPositive && dy >= 0) continue;
+                if (isPositive && dy <= 0) continue;
+            } else {
+                if (!isPositive && dx >= 0) continue;
+                if (isPositive && dx <= 0) continue;
+            }
+
+            // 优先选择主方向上最近的，辅以垂直偏移作为次要排序
+            const primaryDist = isVertical ? Math.abs(dy) : Math.abs(dx);
+            const secondaryDist = isVertical ? Math.abs(dx) * 2 : Math.abs(dy) * 2;
+            const score = primaryDist + secondaryDist;
+
+            if (score < bestScore) {
+                bestScore = score;
+                best = n;
+            }
+        }
+
+        if (best) this._selectNode(best);
+    }
+
+    /** P2-15: Tab 循环选择节点 */
+    _cycleNode(direction) {
+        const nodes = this.app.state.nodes;
+        if (nodes.length === 0) return;
+
+        const sel = this.app.state.selectedNodes;
+        if (sel.size !== 1) {
+            this._selectNode(nodes[0]);
+            return;
+        }
+
+        const currentId = [...sel][0];
+        const idx = nodes.findIndex(n => n.id === currentId);
+        const nextIdx = (idx + direction + nodes.length) % nodes.length;
+        this._selectNode(nodes[nextIdx]);
+    }
+
+    _selectNode(node) {
+        this.app.state.selectedNodes.clear();
+        this.app.state.selectedNodes.add(node.id);
+        this.app.state.selectedLink = null;
+        this.app.ui.showNodeBubble(node);
+        this.needsRender = true;
+    }
+
+    _bindPointerEvents() {
+        const canvas = this.canvas;
 
         const handleStart = (e) => {
             this.needsRender = true;
@@ -479,7 +608,7 @@ export class GraphModule {
                 e.preventDefault(); return;
             }
 
-            const m = getPos(e);
+            const m = this._getEventPos(e);
             let hitNode = null;
             for (let i = this.app.state.nodes.length - 1; i >= 0; i--) {
                 const n = this.app.state.nodes[i];
@@ -559,7 +688,7 @@ export class GraphModule {
 
         const handleMove = (e) => {
             this.needsRender = true;
-            const m = getPos(e);
+            const m = this._getEventPos(e);
 
             if (e.touches && e.touches.length === 2 && this.pinchStartDist) {
                 const dx = e.touches[0].clientX - e.touches[1].clientX;
@@ -650,7 +779,7 @@ export class GraphModule {
         // [P0-1] Double-click node to edit label inline
         canvas.addEventListener('dblclick', (e) => {
             if (e.target !== canvas) return;
-            const m = getPos(e);
+            const m = this._getEventPos(e);
             for (let i = this.app.state.nodes.length - 1; i >= 0; i--) {
                 const n = this.app.state.nodes[i];
                 const r = (n.type === 'root' ? config.nodeRadius : config.subRadius) * (n.scale || 1);
