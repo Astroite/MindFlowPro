@@ -3,11 +3,22 @@ import { config } from '../../config.js';
 export class NodeRenderer {
     constructor(app) {
         this.app = app;
-        this.imageCache = new Map();
+        this.imageCache = new Map(); // LRU: 最新在末尾，最旧在开头
+        this._imageCacheMax = config.imageCacheMaxSize;
         this._wrapCacheMap = new Map();
         this._wrapCacheMax = 64;
         this.searchMatchNodeId = null;
         this.textureCache = new Map();
+    }
+
+    /** LRU-aware cache set: keeps newest entries, evicts oldest when full */
+    _cacheSet(key, value) {
+        this.imageCache.delete(key);
+        this._cacheSet(key, value);
+        while (this.imageCache.size > this._imageCacheMax) {
+            const oldest = this.imageCache.keys().next().value;
+            this.imageCache.delete(oldest);
+        }
     }
 
     clearTextureCache() {
@@ -492,9 +503,9 @@ export class NodeRenderer {
             ctx.clip();
             if (!this.imageCache.has(res.id) && this.app.utils.isSafeUrl(res.content)) {
                 const img = new Image(); img.src = res.content;
-                img.onload = () => this.imageCache.set(res.id, img);
-                img.onerror = () => { this.imageCache.set(res.id, 'error'); };
-                this.imageCache.set(res.id, 'loading');
+                img.onload = () => this._cacheSet(res.id, img);
+                img.onerror = () => { this._cacheSet(res.id, 'error'); };
+                this._cacheSet(res.id, 'loading');
             }
             const img = this.imageCache.get(res.id);
             if (img && img !== 'loading' && img !== 'error' && img.width) {
@@ -627,15 +638,15 @@ export class NodeRenderer {
         if (!res || res.type !== 'image' || this.imageCache.has(res.id)) return;
         if (!this.app.utils.isSafeUrl(res.content)) return;
         const img = new Image(); img.src = res.content;
-        img.onload = () => { this.imageCache.set(res.id, img); this.app.graph.needsRender = true; };
+        img.onload = () => { this._cacheSet(res.id, img); this.app.graph.needsRender = true; };
         img.onerror = () => {
-            this.imageCache.set(res.id, 'error');
+            this._cacheSet(res.id, 'error');
             // Clear the error entry after 30s so a later retry (e.g. transient data URL parse) can succeed
             setTimeout(() => {
                 if (this.imageCache.get(res.id) === 'error') this.imageCache.delete(res.id);
             }, 30000);
         };
-        this.imageCache.set(res.id, 'loading');
+        this._cacheSet(res.id, 'loading');
     }
 
     drawImageInNode(ctx, node, res, r, shape) {

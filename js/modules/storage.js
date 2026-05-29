@@ -206,6 +206,44 @@ export class StorageModule {
         this.app.ui.updateSaveStatus('已就绪');
     }
 
+    /**
+     * P3-29: 数据迁移注册表。
+     * 每个迁移函数接收项目数据，就地修改并返回。
+     * 新迁移追加在末尾，编号从 1 开始。
+     */
+    static MIGRATIONS = [
+        // v1: 无显式版本号的旧数据 → 标准化字段（已在 loadProject 中处理，这里仅标记版本）
+        (proj) => {
+            // 确保 nodes 有默认字段
+            (proj.nodes || []).forEach(n => {
+                if (!n.shape) n.shape = 'circle';
+                if (!n.layout) n.layout = 'icon';
+                if (!n.borderStyle) n.borderStyle = 'solid';
+            });
+            // 确保 resources 有 parentId 和 tags
+            (proj.resources || []).forEach(r => {
+                if (!r.parentId) r.parentId = null;
+                if (!Array.isArray(r.tags)) r.tags = [];
+            });
+        },
+    ];
+
+    _migrateProject(proj) {
+        const currentVersion = proj.dataVersion || 0;
+        const targetVersion = config.dataVersion;
+        if (currentVersion >= targetVersion) return proj;
+
+        for (let v = currentVersion; v < targetVersion; v++) {
+            const migration = StorageModule.MIGRATIONS[v];
+            if (migration) {
+                migration(proj);
+                console.log(`[Migration] Applied v${v} → v${v + 1}`);
+            }
+        }
+        proj.dataVersion = targetVersion;
+        return proj;
+    }
+
     async loadProject(id) {
         this._isLoading = true;
         try {
@@ -224,6 +262,9 @@ export class StorageModule {
                 this.app.ui.toast('项目数据已损坏: ' + validation.errors[0], 'error');
                 // 仍然尝试加载（降级），让 normalize 逻辑修复能修复的部分
             }
+
+            // P3-29: 数据迁移
+            this._migrateProject(proj);
 
             // Undo/redo and clipboard are scoped to a single project — wipe them
             // so commands from the previous project cannot corrupt this one.
@@ -322,6 +363,7 @@ export class StorageModule {
             id: this.app.state.currentId,
             name: currentProjName,
             updated: Date.now(),
+            dataVersion: config.dataVersion,
             nodes: cleanNodes,
             links: cleanLinks,
             resources: this.app.state.resources,
@@ -356,7 +398,7 @@ export class StorageModule {
 
         // Regenerate node + resource IDs to prevent collisions with existing data and as
         // defense-in-depth against untrusted IDs ever reaching DOM attributes.
-        const genId = (prefix) => prefix + Date.now() + '_' + Math.random().toString(36).slice(2, 9);
+        const genId = (prefix) => this.app.utils.genId(prefix);
         const resIdMap = {};
         const nodeIdMap = {};
         resources.forEach(r => {

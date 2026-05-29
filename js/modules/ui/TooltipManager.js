@@ -23,16 +23,10 @@ export class TooltipManager {
 
     _updateTooltipTheme() {
         if (!this.tooltipEl) return;
-        const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-        if (isDark) {
-            this.tooltipEl.style.background = '#27272a';
-            this.tooltipEl.style.border = '1px solid #3f3f46';
-            this.tooltipEl.style.color = '#f3f4f6';
-        } else {
-            this.tooltipEl.style.background = '#ffffff';
-            this.tooltipEl.style.border = '1px solid #e2e8f0';
-            this.tooltipEl.style.color = '#1f2937';
-        }
+        const cs = getComputedStyle(document.documentElement);
+        this.tooltipEl.style.background = cs.getPropertyValue('--bg-surface-solid').trim();
+        this.tooltipEl.style.border = '1px solid ' + cs.getPropertyValue('--border-color').trim();
+        this.tooltipEl.style.color = cs.getPropertyValue('--text-main').trim();
     }
 
     showSidebarPreview(resId, event) {
@@ -59,7 +53,7 @@ export class TooltipManager {
                 html = '<pre>' + this.app.utils.escapeHtml(res.content || '') + '</pre>';
             }
             html = this.app.utils.purifyHTML(html);
-            const mdBg = isDark ? '#1e1e1e' : '#f8f9fa';
+            const mdBg = isDark ? 'rgba(30,30,30,0.8)' : 'rgba(248,249,250,0.9)';
             content = `<div class="md-preview" style="background:${mdBg}; padding:10px; border-radius:4px; max-height:280px; overflow-y:auto;">${html}</div>`;
         }
         else if (res.type === 'code') {

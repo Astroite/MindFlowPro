@@ -36,6 +36,16 @@
     /* Aliases for previously undefined references */
     --bg-panel: var(--bg-surface-solid);
     --text-secondary: var(--text-sub);
+
+    /* Typography scale */
+    --font-xs: 11px;
+    --font-sm: 12px;
+    --font-base: 14px;
+    --font-md: 15px;
+    --font-lg: 16px;
+    --font-xl: 18px;
+    --font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+    --font-mono: "SF Mono", "Fira Code", "JetBrains Mono", Consolas, monospace;
 }
 
 /* --- 深色模式 (Dark) --- */
@@ -66,7 +76,8 @@
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 
 body {
-    font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+    font-family: var(--font-family);
+    font-size: var(--font-base);
     background-color: var(--bg-app);
     color: var(--text-main);
     overflow: hidden;

@@ -312,7 +312,7 @@ export class GraphModule {
         ctx.restore();
     }
     _createNode({ type = 'root', x, y, label = '新节点', scale, resId }) {
-        const id = config.idPrefix.node + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+        const id = this.app.utils.genId(config.idPrefix.node);
         const node = { id, type, x, y, label, scale: scale || config.newNodeScale, resId };
         if (resId) this.nodeRenderer.preloadImage(resId);
         return node;

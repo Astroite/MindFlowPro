@@ -33,6 +33,14 @@ export const utils = {
             .replace(/`/g, "&#96;");
     },
 
+    // 生成唯一 ID（优先 crypto.randomUUID，降级为 Date.now + random）
+    genId(prefix) {
+        if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+            return prefix + crypto.randomUUID();
+        }
+        return prefix + Date.now() + '_' + Math.random().toString(36).slice(2, 9);
+    },
+
     // URL scheme 白名单校验，防止 javascript: 注入
     isSafeUrl(url) {
         if (typeof url !== 'string') return false;

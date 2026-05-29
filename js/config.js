@@ -1,5 +1,6 @@
 export const config = {
-    appVersion: '4.15.0',
+    appVersion: '4.16.0',
+    dataVersion: 1, // 项目数据模型版本，用于迁移
     nodeRadius: 40,
     subRadius: 30,
     linkDistance: 150,
@@ -107,6 +108,9 @@ export const config = {
 
     // Camera animation
     cameraAnimDuration: 300,    // search-result pan animation (ms)
+
+    // Image cache
+    imageCacheMaxSize: 100,     // max cached images (LRU eviction)
 
     colorsDark: {
         primary: '#818cf8',

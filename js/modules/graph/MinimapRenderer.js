@@ -59,6 +59,23 @@ export class MinimapRenderer {
         octx.roundRect(0, 0, mmW, mmH, 6);
         octx.clip();
 
+        // Links as thin lines
+        const nodeById = new Map(nodes.map(n => [n.id, n]));
+        octx.strokeStyle = isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.1)';
+        octx.lineWidth = 0.5;
+        const DataModule = this.app.data;
+        this.app.state.links.forEach(l => {
+            const sId = DataModule?.constructor?.linkEnd ? DataModule.constructor.linkEnd(l, 'source') : (typeof l.source === 'object' ? l.source.id : l.source);
+            const tId = DataModule?.constructor?.linkEnd ? DataModule.constructor.linkEnd(l, 'target') : (typeof l.target === 'object' ? l.target.id : l.target);
+            const s = typeof l.source === 'object' ? l.source : nodeById.get(sId);
+            const t = typeof l.target === 'object' ? l.target : nodeById.get(tId);
+            if (!s || !t || isNaN(s.x) || isNaN(t.x)) return;
+            octx.beginPath();
+            octx.moveTo(ox + (s.x - minX) * scale, oy + (s.y - minY) * scale);
+            octx.lineTo(ox + (t.x - minX) * scale, oy + (t.y - minY) * scale);
+            octx.stroke();
+        });
+
         // Nodes as dots
         nodes.forEach(n => {
             const dx = ox + (n.x - minX) * scale;
