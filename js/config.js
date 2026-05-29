@@ -1,5 +1,5 @@
 export const config = {
-    appVersion: '4.16.0',
+    appVersion: '4.16.1',
     dataVersion: 1, // 项目数据模型版本，用于迁移
     nodeRadius: 40,
     subRadius: 30,
