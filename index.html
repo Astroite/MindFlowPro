@@ -19,7 +19,7 @@
 </head>
 <body>
 
-<a href="#mainCanvas" class="skip-link" style="position:absolute;left:-9999px;top:0;z-index:9999;padding:8px 16px;background:#6366f1;color:#fff;text-decoration:none;border-radius:0 0 4px 0;">跳转到画布</a>
+<a href="#mainCanvas" class="skip-link" style="position:absolute;left:-9999px;top:0;z-index:9999;padding:8px 16px;background:#24566f;color:#fff;text-decoration:none;border-radius:0 0 4px 0;">跳转到画布</a>
 
 <input type="file" id="importInput" style="display: none;" accept=".json,.mindflow">
 
@@ -32,7 +32,7 @@
                 <option value="" disabled selected>正在加载...</option>
             </select>
                 <div class="search-box">
-                    <span class="search-icon">🔍</span>
+                    <span class="search-icon" data-icon="search"></span>
                     <label>
                         <input type="text" class="search-input" placeholder="搜索资源...">
                     </label>
@@ -44,10 +44,10 @@
                     </select>
                 </div>
                 <div class="btn-group-mini">
-                    <button class="btn-icon" data-action="saveDisk" title="导出到本地磁盘" aria-label="导出到本地磁盘">💾</button>
-                    <button class="btn-icon" data-action="openDisk" title="从磁盘打开项目" aria-label="从磁盘打开项目">📂</button>
-                    <button class="btn-icon" data-action="duplicateProject" title="复制当前项目" aria-label="复制当前项目">📋</button>
-                    <button class="btn-icon danger" data-action="deleteProject" title="删除当前项目" aria-label="删除当前项目">🗑️</button>
+                    <button class="btn-icon" data-action="saveDisk" title="导出到本地磁盘" aria-label="导出到本地磁盘"><span data-icon="save"></span></button>
+                    <button class="btn-icon" data-action="openDisk" title="从磁盘打开项目" aria-label="从磁盘打开项目"><span data-icon="open"></span></button>
+                    <button class="btn-icon" data-action="duplicateProject" title="复制当前项目" aria-label="复制当前项目"><span data-icon="copy"></span></button>
+                    <button class="btn-icon danger" data-action="deleteProject" title="删除当前项目" aria-label="删除当前项目"><span data-icon="trash"></span></button>
                 </div>
             </div>
         </div>
@@ -60,15 +60,15 @@
         </div>
 
         <div class="sidebar-footer" id="sidebarFooter">
-            <button class="btn-secondary" style="flex:1;" data-action="createFolder" title="新建文件夹" aria-label="新建文件夹">📁</button>
-            <button class="btn-primary" style="flex:3;" data-action="openResModal">+ 添加资源</button>
-            <button class="btn-secondary" style="flex:1;" data-action="toggleBatchMode" title="批量管理" aria-label="批量管理">☑️</button>
+            <button class="btn-secondary" style="flex:1;" data-action="createFolder" title="新建文件夹" aria-label="新建文件夹"><span data-icon="folderPlus"></span></button>
+            <button class="btn-primary" style="flex:3;" data-action="openResModal"><span data-icon="plus"></span><span>添加资源</span></button>
+            <button class="btn-secondary" style="flex:1;" data-action="toggleBatchMode" title="批量管理" aria-label="批量管理"><span data-icon="checkSquare"></span></button>
         </div>
         <div class="batch-bar" id="batchBar" style="display:none;">
             <span id="batchCount">已选 0 项</span>
             <select id="batchFolderSelect" class="batch-folder-select"><option value="">移到...</option></select>
-            <button class="btn-secondary batch-action-btn" data-action="batchMove">📂 移动</button>
-            <button class="btn-danger batch-action-btn" data-action="batchDelete">🗑️ 删除</button>
+            <button class="btn-secondary batch-action-btn" data-action="batchMove"><span data-icon="open"></span><span>移动</span></button>
+            <button class="btn-danger batch-action-btn" data-action="batchDelete"><span data-icon="trash"></span><span>删除</span></button>
             <button class="btn-secondary batch-action-btn" data-action="toggleBatchMode">取消</button>
         </div>
     </div>
@@ -76,32 +76,32 @@
     <div class="main-area">
         <div class="toolbar" role="toolbar" aria-label="工具栏">
             <div class="toolbar-left">
-                <button class="tool-btn" data-action="toggleSidebar" title="菜单" aria-label="切换侧边栏" aria-expanded="false" aria-controls="sidebar">☰</button>
-                <button class="tool-btn primary" data-action="addRootNode" title="添加根节点" aria-label="添加根节点"><span>+ 根节点</span></button>
+                <button class="tool-btn" data-action="toggleSidebar" title="菜单" aria-label="切换侧边栏" aria-expanded="false" aria-controls="sidebar"><span data-icon="menu"></span></button>
+                <button class="tool-btn primary" data-action="addRootNode" title="添加根节点" aria-label="添加根节点"><span data-icon="plus"></span><span>根节点</span></button>
             </div>
             <div class="toolbar-center">
                 <input type="text" id="projTitleInput" class="project-title-input" placeholder="未命名项目" data-action="renameProject" title="点击重命名项目" aria-label="项目名称">
             </div>
             <div class="toolbar-right">
-                <button class="tool-btn" data-action="resetCamera" title="视图归位 (双击画布)" aria-label="视图归位">🔎</button>
+                <button class="tool-btn" data-action="resetCamera" title="视图归位 (双击画布)" aria-label="视图归位"><span data-icon="target"></span></button>
                 <div class="export-dropdown">
-                    <button class="tool-btn" data-action="toggleExportMenu" title="导出" aria-label="导出" aria-expanded="false" aria-haspopup="true">📤 <span class="dropdown-arrow">▾</span></button>
+                    <button class="tool-btn" data-action="toggleExportMenu" title="导出" aria-label="导出" aria-expanded="false" aria-haspopup="true"><span data-icon="export"></span><span class="dropdown-arrow" data-icon="chevronDown"></span></button>
                     <div class="export-menu" id="exportMenu">
-                        <button data-action="exportPng">📷 导出 PNG</button>
-                        <button data-action="exportSvg">📐 导出 SVG</button>
+                        <button data-action="exportPng"><span data-icon="image"></span><span>导出 PNG</span></button>
+                        <button data-action="exportSvg"><span data-icon="svg"></span><span>导出 SVG</span></button>
                     </div>
                 </div>
-                <button class="tool-btn" id="btnToggleMinimap" data-action="toggleMinimap" title="小地图" aria-label="小地图">🗺️</button>
-                <button class="tool-btn" data-action="toggleTheme" title="切换主题" aria-label="切换主题">🌗</button>
-                <button class="tool-btn" data-action="toggleNodeSearch" title="搜索节点" aria-label="搜索节点">🔍</button>
-                <button class="tool-btn" data-action="openShortcuts" title="快捷键" aria-label="快捷键">⌨️</button>
+                <button class="tool-btn" id="btnToggleMinimap" data-action="toggleMinimap" title="小地图" aria-label="小地图"><span data-icon="map"></span></button>
+                <button class="tool-btn" data-action="toggleTheme" title="切换主题" aria-label="切换主题"><span data-icon="theme"></span></button>
+                <button class="tool-btn" data-action="toggleNodeSearch" title="搜索节点" aria-label="搜索节点"><span data-icon="search"></span></button>
+                <button class="tool-btn" data-action="openShortcuts" title="快捷键" aria-label="快捷键"><span data-icon="keyboard"></span></button>
             </div>
             <div class="node-search-bar" id="nodeSearchBar" style="display:none;">
                 <input type="text" id="nodeSearchInput" class="node-search-input" placeholder="搜索节点...">
                 <span id="nodeSearchCount" class="node-search-count"></span>
-                <button class="node-search-btn" data-action="nodeSearchPrev" title="上一个">▲</button>
-                <button class="node-search-btn" data-action="nodeSearchNext" title="下一个">▼</button>
-                <button class="node-search-btn" data-action="toggleNodeSearch" title="关闭">✕</button>
+                <button class="node-search-btn" data-action="nodeSearchPrev" title="上一个"><span data-icon="chevronUp"></span></button>
+                <button class="node-search-btn" data-action="nodeSearchNext" title="下一个"><span data-icon="chevronDown"></span></button>
+                <button class="node-search-btn" data-action="toggleNodeSearch" title="关闭"><span data-icon="close"></span></button>
             </div>
         </div>
 
@@ -115,14 +115,14 @@
 
 <div id="nodeBubble" class="node-bubble-container" style="display: none;" role="toolbar" aria-label="节点操作">
     <button class="bubble-btn action-edit" data-action="bubbleEdit" title="编辑节点" aria-label="编辑节点">
-        <span style="font-size: 16px;">✏️</span>
+        <span data-icon="edit"></span>
     </button>
     <!-- [New] 飞线按钮 -->
     <button class="bubble-btn action-link" data-action="bubbleLink" title="创建连线" aria-label="创建连线">
-        <span style="font-size: 16px;">🪡</span>
+        <span data-icon="route"></span>
     </button>
     <button class="bubble-btn action-delete" data-action="bubbleDelete" title="删除节点" aria-label="删除节点">
-        <span style="font-size: 16px;">🗑️</span>
+        <span data-icon="trash"></span>
     </button>
 </div>
 
@@ -144,8 +144,8 @@
 <div class="modal-overlay" id="resModal" role="dialog" aria-modal="true" aria-label="资源编辑" style="display: none;">
     <div class="modern-modal">
         <div class="panel-header">
-            <h3 id="resModalTitle">✨ 添加资源</h3>
-            <button class="close-btn" aria-label="关闭" data-action="closeModal" data-modal="resModal">×</button>
+            <h3 id="resModalTitle"><span data-icon="archive"></span>添加资源</h3>
+            <button class="close-btn" aria-label="关闭" data-action="closeModal" data-modal="resModal"><span data-icon="close"></span></button>
         </div>
 
         <div class="panel-body">
@@ -153,14 +153,14 @@
                 <label class="panel-label">资源类型</label>
                 <div class="select-wrapper">
                     <select id="resType" class="form-input panel-select">
-                        <option value="image">🖼️ 图片 (Image)</option>
-                        <option value="md">📝 文档 (Markdown)</option>
-                        <option value="code">💻 代码段 (Code)</option>
-                        <option value="color">🎨 色卡 (Palette)</option>
-                        <option value="audio">🎤 音频 (Audio)</option>
-                        <option value="link">🔗 链接 (Link)</option>
+                        <option value="image">图片 (Image)</option>
+                        <option value="md">文档 (Markdown)</option>
+                        <option value="code">代码段 (Code)</option>
+                        <option value="color">色卡 (Palette)</option>
+                        <option value="audio">音频 (Audio)</option>
+                        <option value="link">链接 (Link)</option>
                     </select>
-                    <span class="select-arrow">▼</span>
+                    <span class="select-arrow" data-icon="chevronDown"></span>
                 </div>
             </div>
 
@@ -170,7 +170,7 @@
                     <select id="resParentId" class="form-input panel-select">
                         <option value="">(根目录)</option>
                     </select>
-                    <span class="select-arrow">▼</span>
+                    <span class="select-arrow" data-icon="chevronDown"></span>
                 </div>
             </div>
 
@@ -207,15 +207,15 @@
 
         <div class="panel-footer">
             <button class="btn-secondary" data-action="closeModal" data-modal="resModal">取消</button>
-            <button class="btn-primary" data-action="saveResource">保存资源</button>
+            <button class="btn-primary" data-action="saveResource"><span data-icon="save"></span><span>保存资源</span></button>
         </div>
     </div>
 </div>
 
 <div class="node-menu modern-panel" id="nodeMenu" style="display: none;">
     <div class="panel-header">
-        <h3>编辑节点</h3>
-        <button class="close-btn" aria-label="关闭" data-action="closeNodeMenu">×</button>
+        <h3><span data-icon="edit"></span>编辑节点</h3>
+        <button class="close-btn" aria-label="关闭" data-action="closeNodeMenu"><span data-icon="close"></span></button>
     </div>
 
     <div class="panel-body">
@@ -228,7 +228,7 @@
             <label class="panel-label">关联资源</label>
             <div class="select-wrapper">
                 <label for="nodeResSelect" class="sr-only">关联资源</label><select id="nodeResSelect" class="form-input panel-select"></select>
-                <span class="select-arrow">▼</span>
+                <span class="select-arrow" data-icon="chevronDown"></span>
             </div>
         </div>
 
@@ -261,8 +261,8 @@
         <div class="form-group form-row" id="shapeRatioRow">
             <label class="panel-label" id="shapeRatioLabel">形状</label>
             <div id="shapeOptions" class="shape-options" role="radiogroup" aria-label="节点形状" style="display:flex;gap:6px;flex:1;">
-                <button type="button" class="shape-btn" data-shape="circle" title="圆形" role="radio" aria-checked="false">●</button>
-                <button type="button" class="shape-btn" data-shape="rounded-rect" title="圆角方形" role="radio" aria-checked="false">▢</button>
+                <button type="button" class="shape-btn" data-shape="circle" title="圆形" role="radio" aria-checked="false"><span data-icon="shapeCircle"></span></button>
+                <button type="button" class="shape-btn" data-shape="rounded-rect" title="圆角方形" role="radio" aria-checked="false"><span data-icon="shapeSquare"></span></button>
             </div>
             <div id="ratioOptions" class="ratio-options" role="radiogroup" aria-label="卡片比例" style="display:none;gap:6px;flex:1;">
                 <button type="button" class="ratio-btn" data-ratio="1:1" role="radio" aria-checked="false">1:1</button>
@@ -281,7 +281,7 @@
                     <option value="double">双线</option>
                     <option value="gradient">渐变</option>
                 </select>
-                <span class="select-arrow">▼</span>
+                <span class="select-arrow" data-icon="chevronDown"></span>
             </div>
         </div>
 
@@ -292,7 +292,7 @@
     </div>
 
     <div class="panel-footer">
-        <button class="btn-primary full-width" data-action="saveNodeEdit">保存</button>
+        <button class="btn-primary full-width" data-action="saveNodeEdit"><span data-icon="save"></span><span>保存</span></button>
     </div>
 </div>
 
@@ -305,8 +305,8 @@
 <div class="modal-overlay" id="shortcutsModal" role="dialog" aria-modal="true" aria-label="快捷键帮助" style="display:none;">
     <div class="modern-modal" style="max-width:480px;">
         <div class="panel-header">
-            <h3>⌨️ 快捷键</h3>
-            <button class="close-btn" aria-label="关闭" data-action="closeModal" data-modal="shortcutsModal">×</button>
+            <h3><span data-icon="keyboard"></span>快捷键</h3>
+            <button class="close-btn" aria-label="关闭" data-action="closeModal" data-modal="shortcutsModal"><span data-icon="close"></span></button>
         </div>
         <div class="panel-body" style="max-height:60vh;overflow-y:auto;">
             <table class="shortcuts-table">
@@ -335,8 +335,8 @@
 <div class="modal-overlay" id="viewerModal" role="dialog" aria-modal="true" aria-label="资源查看" style="display:none;">
     <div class="viewer-modal">
         <div class="panel-header">
-            <h3 id="viewerTitle">📄 资源查看</h3>
-            <button class="close-btn" aria-label="关闭" data-action="closeModal" data-modal="viewerModal">×</button>
+            <h3 id="viewerTitle"><span data-icon="fileText"></span>资源查看</h3>
+            <button class="close-btn" aria-label="关闭" data-action="closeModal" data-modal="viewerModal"><span data-icon="close"></span></button>
         </div>
         <div id="viewerContent" class="viewer-content"></div>
     </div>

@@ -57,7 +57,7 @@ export class NodeEditor {
             this._colorReset = true;
             this._colorChanged = false;
             const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-            document.getElementById('nodeColor').value = isDark ? '#818cf8' : '#6366f1';
+            document.getElementById('nodeColor').value = isDark ? config.colorsDark.primary : config.colors.primary;
         });
     }
 
@@ -99,7 +99,7 @@ export class NodeEditor {
         this._colorReset = false;
         const colorInput = document.getElementById('nodeColor');
         const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-        if (colorInput) colorInput.value = node.color || (isDark ? '#818cf8' : '#6366f1');
+        if (colorInput) colorInput.value = node.color || (isDark ? config.colorsDark.primary : config.colors.primary);
 
         // Note
         const noteEl = document.getElementById('nodeNote');
@@ -141,17 +141,42 @@ export class NodeEditor {
         const borderSel = document.getElementById('nodeBorderStyle');
         if (borderSel) borderSel.value = node.borderStyle || 'solid';
 
-        if (x !== undefined && y !== undefined) {
-            let left = x; let top = y;
-            if (left + 320 > window.innerWidth) left = window.innerWidth - 340;
-            if (top + 550 > window.innerHeight) top = window.innerHeight - 570;
-            if (left < 20) left = 20; if (top < 20) top = 20;
-
-            m.style.left = left + 'px';
-            m.style.top = top + 'px';
-        }
         m.style.display = 'flex';
+        m.style.visibility = 'hidden';
+        this._positionNodeMenu(m, node, x, y);
+        m.style.visibility = 'visible';
         this._trapFocus(m);
+    }
+
+    _positionNodeMenu(menu, node, explicitX, explicitY) {
+        const margin = 18;
+        const gap = 18;
+        const width = menu.offsetWidth || 320;
+        const height = menu.offsetHeight || 560;
+        let left;
+        let top;
+
+        if (explicitX !== undefined && explicitY !== undefined) {
+            left = explicitX;
+            top = explicitY;
+        } else {
+            const cam = this.app.state.camera;
+            const canvasRect = this.app.dom.mainCanvas.getBoundingClientRect();
+            const r = (node.type === 'root' ? config.nodeRadius : config.subRadius) * (node.scale || 1) * cam.k;
+            const screenX = (node.x * cam.k + cam.x) + canvasRect.left;
+            const screenY = (node.y * cam.k + cam.y) + canvasRect.top;
+
+            const rightLeft = screenX + r + gap;
+            const leftLeft = screenX - r - gap - width;
+            left = rightLeft + width <= window.innerWidth - margin ? rightLeft : leftLeft;
+            top = screenY - height / 2;
+        }
+
+        left = Math.min(Math.max(left, margin), Math.max(margin, window.innerWidth - width - margin));
+        top = Math.min(Math.max(top, margin), Math.max(margin, window.innerHeight - height - margin));
+
+        menu.style.left = `${left}px`;
+        menu.style.top = `${top}px`;
     }
 
     _trapFocus(panel) {
@@ -218,9 +243,7 @@ export class NodeEditor {
         const node = this.app.state.bubbleNode;
         if (!node) return;
         this.hideNodeBubble();
-        const cx = window.innerWidth / 2 - 160;
-        const cy = window.innerHeight / 2 - 200;
-        this.openNodeMenu(node, cx, cy);
+        this.openNodeMenu(node);
     }
 
     async onBubbleDelete() {

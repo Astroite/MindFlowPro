@@ -1,5 +1,5 @@
 export const config = {
-    appVersion: '4.16.1',
+    appVersion: '4.18.5',
     dataVersion: 1, // 项目数据模型版本，用于迁移
     nodeRadius: 40,
     subRadius: 30,
@@ -25,9 +25,9 @@ export const config = {
     // ID prefixes
     idPrefix: { node: 'n_', resource: 'res_', folder: 'folder_', project: 'proj_' },
 
-    // Resource type icons
-    resIcons: { md: '📝', code: '💻', audio: '🎵', link: '🔗' },
-    resIconsUI: { md: '📝', code: '💻', audio: '🎤', link: '🔗', color: '🎨', image: '🖼️', folder: '📁' },
+    // Resource type icon names from icons.js
+    resIcons: { md: 'fileText', code: 'code', audio: 'audio', link: 'link' },
+    resIconsUI: { md: 'fileText', code: 'code', audio: 'audio', link: 'link', color: 'palette', image: 'image', folder: 'folder' },
 
     // Canvas interaction
     hitRadius: 15,          // plus button hit radius (px)
@@ -65,14 +65,14 @@ export const config = {
     zoomOutFactor: 0.9,
 
     colors: {
-        primary: '#6366f1',
-        surface: '#ffffff',
-        outline: '#e2e8f0',
-        textMain: '#1f2937',
-        textLight: '#ffffff',
-        selection: '#818cf8',
-        link: '#cbd5e1',
-        cross: '#445252'
+        primary: '#24566f',
+        surface: '#fffaf0',
+        outline: '#d6c8a8',
+        textMain: '#263239',
+        textLight: '#fffaf0',
+        selection: '#b88a3d',
+        link: '#8ba08a',
+        cross: '#b64b38'
     },
     cardWidth: 120,
     cardHeight: 80,
@@ -103,7 +103,7 @@ export const config = {
     visNodePadding: 100,        // off-screen culling padding (px)
 
     // Canvas fonts
-    fontBold: '600 18px "Segoe UI", sans-serif',
+    fontBold: '700 18px "Segoe UI", sans-serif',
     fontNormal: '14px "Segoe UI", sans-serif',
 
     // Camera animation
@@ -113,13 +113,13 @@ export const config = {
     imageCacheMaxSize: 100,     // max cached images (LRU eviction)
 
     colorsDark: {
-        primary: '#818cf8',
-        surface: '#27272a',
-        outline: '#3f3f46',
-        textMain: '#f3f4f6',
-        textLight: '#1f2937',
-        selection: '#6366f1',
-        link: '#52525b',
-        cross: '#5d7070'
+        primary: '#8fb8c6',
+        surface: '#242927',
+        outline: '#4f584b',
+        textMain: '#f2eadc',
+        textLight: '#19201e',
+        selection: '#d2aa61',
+        link: '#7d8b72',
+        cross: '#d57963'
     }
 };

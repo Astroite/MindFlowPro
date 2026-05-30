@@ -82,7 +82,7 @@ export class MinimapRenderer {
             const dy = oy + (n.y - minY) * scale;
             octx.beginPath();
             octx.arc(dx, dy, n.type === 'root' ? 4 : 2.5, 0, Math.PI * 2);
-            octx.fillStyle = n.type === 'root' ? '#6366f1' : (isDark ? '#a1a1aa' : '#71717a');
+            octx.fillStyle = n.type === 'root' ? (isDark ? config.colorsDark.primary : config.colors.primary) : (isDark ? '#b0aa93' : '#68705f');
             octx.fill();
         });
         octx.restore();

@@ -141,11 +141,12 @@ export class GraphModule {
         hud.id = 'selectionHud';
         Object.assign(hud.style, {
             position: 'absolute', top: '12px', left: '50%', transform: 'translateX(-50%)',
-            background: 'rgba(99,102,241,0.88)', color: 'white',
+            background: 'rgba(38,50,57,0.90)', color: '#fffaf0',
             padding: '4px 14px', borderRadius: '20px',
             fontSize: '12px', fontWeight: '600', letterSpacing: '0.3px',
             display: 'none', zIndex: '50', pointerEvents: 'none',
-            boxShadow: '0 2px 8px rgba(99,102,241,0.3)', whiteSpace: 'nowrap'
+            border: '1px solid rgba(184,138,61,0.28)',
+            boxShadow: '0 8px 22px rgba(61,50,28,0.18)', whiteSpace: 'nowrap'
         });
         this.app.dom.canvasWrapper.appendChild(hud);
         this.selectionHud = hud;
@@ -347,8 +348,8 @@ export class GraphModule {
         const y = Math.min(startY, endY);
         const w = Math.abs(endX - startX);
         const h = Math.abs(endY - startY);
-        ctx.fillStyle = 'rgba(99, 102, 241, 0.1)';
-        ctx.strokeStyle = 'rgba(99, 102, 241, 0.6)';
+        ctx.fillStyle = 'rgba(184, 138, 61, 0.12)';
+        ctx.strokeStyle = 'rgba(36, 86, 111, 0.62)';
         ctx.lineWidth = 1;
         ctx.setLineDash([4, 4]);
         ctx.fillRect(x, y, w, h);
@@ -551,7 +552,8 @@ export class GraphModule {
                 this.app.state.linkingSourceNode = null;
                 this.app.ui.toast('已取消连线');
             }
-            if (e.key === 'f' || e.key === 'F') {
+            if ((e.key === 'f' || e.key === 'F') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                e.preventDefault();
                 this.fitToScreen();
             }
         });

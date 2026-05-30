@@ -1,4 +1,5 @@
 import { config } from '../../config.js';
+import { drawCanvasIcon, resourceIconName } from '../../icons.js';
 
 export class NodeRenderer {
     constructor(app) {
@@ -14,7 +15,7 @@ export class NodeRenderer {
     /** LRU-aware cache set: keeps newest entries, evicts oldest when full */
     _cacheSet(key, value) {
         this.imageCache.delete(key);
-        this._cacheSet(key, value);
+        this.imageCache.set(key, value);
         while (this.imageCache.size > this._imageCacheMax) {
             const oldest = this.imageCache.keys().next().value;
             this.imageCache.delete(oldest);
@@ -171,11 +172,8 @@ export class NodeRenderer {
         // Content icon
         const res = n.resId ? (this._resourceMap && this._resourceMap.get(n.resId)) : null;
         if (res && res.type !== 'image' && res.type !== 'color') {
-            const icon = config.resIcons[res.type] || '🔗';
-            ctx.fillStyle = (n.type === 'root') ? 'rgba(255,255,255,0.9)' : '#f59e0b';
-            ctx.font = `${(n.type === 'root' ? 36 : 24) * n.scale}px Arial`;
-            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-            ctx.fillText(icon, n.x, n.y);
+            ctx.fillStyle = (n.type === 'root') ? 'rgba(255,255,255,0.9)' : config.colors.selection;
+            drawCanvasIcon(ctx, resourceIconName(res.type), n.x, n.y, (n.type === 'root' ? 34 : 24) * n.scale, ctx.fillStyle, 1.9);
         } else if (res && res.type === 'image') {
             this.drawImageInNode(ctx, n, res, r, shape);
         }
@@ -206,7 +204,7 @@ export class NodeRenderer {
         // Search highlight
         if (this.searchMatchNodeId === n.id) {
             this.drawNodeShape(ctx, n.x, n.y, r + 8, shape);
-            ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 3;
+            ctx.strokeStyle = config.colors.selection; ctx.lineWidth = 3;
             ctx.setLineDash([6, 4]); ctx.stroke(); ctx.setLineDash([]);
         }
 
@@ -225,7 +223,7 @@ export class NodeRenderer {
         if (n.note && n.scale >= 0.9) {
             ctx.beginPath();
             ctx.arc(n.x - r * config.diagOffset, n.y - r * config.diagOffset, 5, 0, Math.PI * 2);
-            ctx.fillStyle = '#f59e0b'; ctx.fill();
+            ctx.fillStyle = config.colors.selection; ctx.fill();
         }
     }
 
@@ -462,8 +460,7 @@ export class NodeRenderer {
         const imgH = h * config.cardImageRatio;
 
         // Determine resource icon
-        let icon = '';
-        if (res) { icon = config.resIcons[res.type] || ''; }
+        const iconName = res ? resourceIconName(res.type) : '';
 
         // Shadow
         ctx.shadowColor = 'rgba(0,0,0,0.1)';
@@ -513,17 +510,13 @@ export class NodeRenderer {
                 ctx.drawImage(img, n.x - img.width * scaleImg / 2, y + imgH / 2 - img.height * scaleImg / 2, img.width * scaleImg, img.height * scaleImg);
             }
             ctx.restore();
-        } else if (icon) {
-            ctx.font = `${24 * scale}px Arial`;
-            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-            ctx.fillStyle = (n.type === 'root') ? 'rgba(255,255,255,0.9)' : '#f59e0b';
-            ctx.fillText(icon, n.x, y + imgH / 2);
+        } else if (iconName) {
+            const iconColor = (n.type === 'root') ? 'rgba(255,255,255,0.9)' : config.colors.selection;
+            drawCanvasIcon(ctx, iconName, n.x, y + imgH / 2, 25 * scale, iconColor, 1.9);
         } else {
             // Empty state — show a small icon so the card isn't blank
-            ctx.font = `${20 * scale}px Arial`;
-            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-            ctx.fillStyle = isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.12)';
-            ctx.fillText('💡', n.x, y + imgH / 2);
+            const emptyColor = isDark ? 'rgba(255,255,255,0.18)' : 'rgba(38,50,57,0.18)';
+            drawCanvasIcon(ctx, 'spark', n.x, y + imgH / 2, 22 * scale, emptyColor, 1.6);
         }
 
         // Separator line
@@ -560,7 +553,7 @@ export class NodeRenderer {
         if (this.searchMatchNodeId === n.id) {
             ctx.beginPath();
             ctx.roundRect(x - 5, y - 5, w + 10, h + 10, cornerR + 3);
-            ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 3;
+            ctx.strokeStyle = config.colors.selection; ctx.lineWidth = 3;
             ctx.setLineDash([6, 4]); ctx.stroke(); ctx.setLineDash([]);
         }
 
@@ -568,7 +561,7 @@ export class NodeRenderer {
         if (n.note && n.scale >= 0.9) {
             ctx.beginPath();
             ctx.arc(x + 6, y + 6, 5, 0, Math.PI * 2);
-            ctx.fillStyle = '#f59e0b';
+            ctx.fillStyle = config.colors.selection;
             ctx.fill();
         }
     }
@@ -600,13 +593,13 @@ export class NodeRenderer {
             ctx.restore();
         } else if (style === 'gradient') {
             ctx.save();
-            // Use conic gradient for rainbow border effect
+            // Atlas accent ring: ink, vermilion, brass, moss.
             const grad = ctx.createConicGradient(0, cx, cy);
-            grad.addColorStop(0, '#6366f1');
-            grad.addColorStop(0.25, '#ec4899');
-            grad.addColorStop(0.5, '#f59e0b');
-            grad.addColorStop(0.75, '#22c55e');
-            grad.addColorStop(1, '#6366f1');
+            grad.addColorStop(0, config.colors.primary);
+            grad.addColorStop(0.25, config.colors.cross);
+            grad.addColorStop(0.5, config.colors.selection);
+            grad.addColorStop(0.75, '#556f51');
+            grad.addColorStop(1, config.colors.primary);
             this.drawNodeShape(ctx, cx, cy, r, shape);
             ctx.strokeStyle = grad;
             ctx.lineWidth = 3;
@@ -622,13 +615,9 @@ export class NodeRenderer {
             const btnY = n.y + r * config.diagOffset;
             ctx.beginPath();
             ctx.arc(btnX, btnY, 9, 0, Math.PI * 2);
-            ctx.fillStyle = '#22c55e';
+            ctx.fillStyle = '#556f51';
             ctx.fill();
-            ctx.fillStyle = 'white';
-            ctx.font = 'bold 14px Arial';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('+', btnX, btnY + 1);
+            drawCanvasIcon(ctx, 'plus', btnX, btnY, 13, 'white', 2.4);
         }
     }
 

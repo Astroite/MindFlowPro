@@ -1,4 +1,5 @@
 import { config } from '../config.js';
+import { iconSvg, resourceIconName } from '../icons.js';
 import { TooltipManager } from './ui/TooltipManager.js';
 import { NodeEditor } from './ui/NodeEditor.js';
 import { NodeSearch } from './ui/NodeSearch.js';
@@ -19,6 +20,7 @@ export class UIModule {
     }
 
     init() {
+        this.hydrateStaticIcons();
         this.tooltipManager.initTooltip();
         this.bindGlobalEvents();
         this.setupInputModal();
@@ -51,6 +53,14 @@ export class UIModule {
                 status.textContent = '就绪';
                 this.toast('网络已恢复');
             }
+        });
+    }
+
+    hydrateStaticIcons(root = document) {
+        root.querySelectorAll('[data-icon]').forEach(el => {
+            const name = el.dataset.icon;
+            if (!name) return;
+            el.innerHTML = iconSvg(name);
         });
     }
 
@@ -484,13 +494,13 @@ export class UIModule {
                  role="treeitem" aria-expanded="${isOpen}"
                  data-folder-id="${esId}" title="右键点击可快速重命名">
                 ${batchCb}
-                <div class="folder-icon">▶</div>
+                <div class="folder-icon">${iconSvg('chevronRight')}</div>
                 <div class="res-info"><div class="res-name">${this.highlightText(folder.name, keyword)}</div></div>
                 <div class="res-actions">
-                    <div class="btn-add-resource" data-ra="folderAddResource" data-id="${esId}" title="在此文件夹添加资源">+</div>
-                    <div class="btn-res-action" data-ra="folderCreate" data-id="${esId}" title="新建子文件夹"> </div>
-                    <div class="btn-res-action" data-ra="folderRename" data-id="${esId}" title="重命名">✎</div>
-                    <div class="btn-res-action del" data-ra="deleteResource" data-id="${esId}" title="删除"> </div>
+                    <div class="btn-add-resource" data-ra="folderAddResource" data-id="${esId}" title="在此文件夹添加资源">${iconSvg('plus')}</div>
+                    <div class="btn-res-action" data-ra="folderCreate" data-id="${esId}" title="新建子文件夹">${iconSvg('folderPlus')}</div>
+                    <div class="btn-res-action" data-ra="folderRename" data-id="${esId}" title="重命名">${iconSvg('edit')}</div>
+                    <div class="btn-res-action del" data-ra="deleteResource" data-id="${esId}" title="删除">${iconSvg('trash')}</div>
                 </div>
             </div>
             <div class="folder-children ${isOpen?'open':''}" role="group">${childHtml}</div>
@@ -498,8 +508,11 @@ export class UIModule {
     }
 
     createResItemHtml(r, keyword) {
-        let icon = '🔗';
-        if(r.type==='image') icon='️'; else if(r.type==='md') icon=''; else if(r.type==='code') icon=''; else if(r.type==='color') icon=''; else if(r.type==='audio') icon='';
+        const isImagePreview = r.type === 'image' && this.app.utils.isSafeUrl(r.content);
+        const icon = isImagePreview
+            ? `<img class="res-thumb" src="${this.app.utils.escapeHtml(r.content)}" alt="" loading="lazy" decoding="async" draggable="false">`
+            : iconSvg(resourceIconName(r.type), { className: 'mf-icon res-type-icon' });
+        const iconClass = isImagePreview ? 'res-icon res-thumbnail' : 'res-icon';
 
         const tagsHtml = r.tags && r.tags.length ? `<div class="res-tags">${r.tags.map(t=>`<span class="res-tag">${this.app.utils.escapeHtml(t)}</span>`).join('')}</div>` : '';
 
@@ -512,16 +525,16 @@ export class UIModule {
             <div class="res-item ${batchChecked?'batch-selected':''}"
                  role="treeitem" tabindex="0"
                  draggable="true"
-                 data-res-id="${esId}">
+                data-res-id="${esId}">
                 ${batchCb}
-                <div class="res-icon" data-ra="viewResource" data-id="${esId}">${icon}</div>
+                <div class="${iconClass}" data-ra="viewResource" data-id="${esId}">${icon}</div>
                 <div class="res-info" data-ra="viewResource" data-id="${esId}">
                     <div class="res-name">${this.highlightText(r.name, keyword)}</div>
                     ${tagsHtml}
                 </div>
                 <div class="res-actions">
-                    <div class="btn-res-action" data-ra="editResource" data-id="${esId}" title="编辑">✎</div>
-                    <div class="btn-res-action del" data-ra="deleteResource" data-id="${esId}" title="删除"> </div>
+                    <div class="btn-res-action" data-ra="editResource" data-id="${esId}" title="编辑">${iconSvg('edit')}</div>
+                    <div class="btn-res-action del" data-ra="deleteResource" data-id="${esId}" title="删除">${iconSvg('trash')}</div>
                 </div>
             </div>
         `;
@@ -546,7 +559,7 @@ export class UIModule {
         if (allTags.size === 0) { area.innerHTML = ''; return; }
         const activeTag = this.app.state.activeTag || '';
         let html = '';
-        if (activeTag) html += `<div class="tag-chip active" data-ra="setTag" data-tag="">✕ ${this.app.utils.escapeHtml(activeTag)}</div>`;
+        if (activeTag) html += `<div class="tag-chip active" data-ra="setTag" data-tag="">${iconSvg('close', { className: 'mf-icon inline-icon' })}${this.app.utils.escapeHtml(activeTag)}</div>`;
         allTags.forEach(tag => {
             if (tag !== activeTag) {
                 const es = this.app.utils.escapeHtml(tag);
@@ -712,7 +725,7 @@ export class UIModule {
         const tagsInput = document.getElementById('resTags');
 
         if (mode === 'Edit' && res) {
-            title.innerText = '✨ 编辑资源';
+            title.innerHTML = `${iconSvg('archive')}编辑资源`;
             typeSel.value = res.type; typeSel.disabled = true;
             nameInput.value = res.name;
             parentSel.value = res.parentId || '';
@@ -722,7 +735,7 @@ export class UIModule {
             else if (res.type === 'md' || res.type === 'code') document.getElementById('resTextArea').value = res.content;
             else if (res.type === 'color') { document.getElementById('resColorInput').value = res.content; document.getElementById('resColorValue').innerText = res.content; }
         } else {
-            title.innerText = '✨ 添加资源';
+            title.innerHTML = `${iconSvg('archive')}添加资源`;
             typeSel.disabled = false; this.app.state.editingResId = null;
             nameInput.value = ''; typeSel.value = 'image';
             parentSel.value = preselectParentId || '';
@@ -881,7 +894,7 @@ export class UIModule {
     openViewer(resId) {
         const res = this.app.state.resources.find(r => r.id === resId);
         if (!res) return;
-        document.getElementById('viewerTitle').textContent = res.name;
+        document.getElementById('viewerTitle').innerHTML = `${iconSvg(resourceIconName(res.type))}${this.app.utils.escapeHtml(res.name)}`;
         const contentEl = document.getElementById('viewerContent');
         contentEl.querySelectorAll('audio').forEach(a => a.pause());
         if (res.type === 'image') {
@@ -908,7 +921,7 @@ export class UIModule {
             contentEl.innerHTML = `<p style="word-break:break-all;margin-bottom:16px;color:var(--text-sub);">${this.app.utils.escapeHtml(res.content)}</p><a href="${this.app.utils.escapeHtml(safeUrl)}" target="_blank" style="display:inline-block;background:var(--primary);color:white;text-decoration:none;padding:10px 20px;border-radius:8px;">跳转到链接 </a>`;
         }
         if (res.note) {
-            contentEl.innerHTML += `<div style="margin-top:20px;padding:12px 16px;background:var(--bg-app);border-radius:8px;border-left:3px solid #f59e0b;"><span style="font-size:12px;color:var(--text-sub);display:block;margin-bottom:4px;">备注</span>${this.app.utils.escapeHtml(res.note)}</div>`;
+            contentEl.innerHTML += `<div style="margin-top:20px;padding:12px 16px;background:var(--bg-app);border-radius:8px;border-left:3px solid var(--atlas-brass);"><span style="font-size:12px;color:var(--text-sub);display:block;margin-bottom:4px;">备注</span>${this.app.utils.escapeHtml(res.note)}</div>`;
         }
         this.openModal('viewerModal');
     }

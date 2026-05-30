@@ -1,4 +1,5 @@
 import { config } from '../../config.js';
+import { iconSvgForExport, resourceIconName } from '../../icons.js';
 
 export class ExportManager {
     constructor(app) {
@@ -133,10 +134,11 @@ export class ExportManager {
             }
             // Resource icon
             if (res&&res.type!=='color'&&res.type!=='image') {
-                parts.push(`<text x="${nx}" y="${ny}" text-anchor="middle" dominant-baseline="middle" font-size="${n.type==='root'?32:22}">${config.resIcons[res.type]||'🔗'}</text>`);
+                const iconColor = n.type==='root' ? colors.textLight : colors.selection;
+                parts.push(iconSvgForExport(resourceIconName(res.type), nx, ny, n.type==='root'?34:24, iconColor));
             }
             // Note dot
-            if (n.note) parts.push(`<circle cx="${nx-r*config.diagOffset}" cy="${ny-r*config.diagOffset}" r="5" fill="#f59e0b"/>`);
+            if (n.note) parts.push(`<circle cx="${nx-r*config.diagOffset}" cy="${ny-r*config.diagOffset}" r="5" fill="${config.colors.selection}"/>`);
             // Label - wrap manually for SVG (approximation: 7px per char)
             const label = n.label||'';
             const maxW = r*4;
