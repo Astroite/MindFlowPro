@@ -1,3 +1,5 @@
+import { config } from '../../config.js';
+
 export class NodeSearch {
     constructor(app) {
         this.app = app;
@@ -41,21 +43,44 @@ export class NodeSearch {
         this._updateSearchUI();
     }
 
-    nodeSearchPrev() {
+    _pruneStaleMatches() {
         const matches = this.app.state._searchMatches;
         if (!matches || matches.length === 0) return;
+        const live = new Set(this.app.state.nodes.filter(n => !n._deleting).map(n => n.id));
+        const kept = matches.filter(n => live.has(n.id));
+        if (kept.length === matches.length) return;
+        const prevNode = (this.app.state._searchIndex >= 0) ? matches[this.app.state._searchIndex] : null;
+        this.app.state._searchMatches = kept;
+        if (kept.length === 0) {
+            this.app.state._searchIndex = -1;
+        } else if (prevNode) {
+            const newIdx = kept.indexOf(prevNode);
+            this.app.state._searchIndex = newIdx >= 0
+                ? newIdx
+                : Math.min(this.app.state._searchIndex, kept.length - 1);
+        } else {
+            this.app.state._searchIndex = 0;
+        }
+    }
+
+    nodeSearchPrev() {
+        this._pruneStaleMatches();
+        const matches = this.app.state._searchMatches;
+        if (!matches || matches.length === 0) { this._updateSearchUI(); return; }
         this.app.state._searchIndex = (this.app.state._searchIndex - 1 + matches.length) % matches.length;
         this._updateSearchUI();
     }
 
     nodeSearchNext() {
+        this._pruneStaleMatches();
         const matches = this.app.state._searchMatches;
-        if (!matches || matches.length === 0) return;
+        if (!matches || matches.length === 0) { this._updateSearchUI(); return; }
         this.app.state._searchIndex = (this.app.state._searchIndex + 1) % matches.length;
         this._updateSearchUI();
     }
 
     _updateSearchUI() {
+        this._pruneStaleMatches();
         const matches = this.app.state._searchMatches;
         const idx = this.app.state._searchIndex;
         const countEl = document.getElementById('nodeSearchCount');
@@ -77,7 +102,7 @@ export class NodeSearch {
     _animateCamera(targetX, targetY, targetK) {
         const cam = this.app.state.camera;
         const startX = cam.x, startY = cam.y;
-        const duration = 300;
+        const duration = config.cameraAnimDuration;
         const start = performance.now();
         const step = (now) => {
             const t = Math.min(1, (now - start) / duration);

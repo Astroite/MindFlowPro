@@ -2,12 +2,14 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' https: blob:; connect-src 'self' https:;">
     <title>MindFlow - 本地化视觉思维导图</title>
 
     <link rel="manifest" href="manifest.json">
     <link rel="stylesheet" href="css/style.css">
 
+    <script src="js/bootstrap.js"></script>
     <script type="module" src="js/app.js"></script>
 
     <script defer src="js/lib/d3.v7.min.js"></script>
@@ -17,6 +19,8 @@
 </head>
 <body>
 
+<a href="#mainCanvas" class="skip-link" style="position:absolute;left:-9999px;top:0;z-index:9999;padding:8px 16px;background:#6366f1;color:#fff;text-decoration:none;border-radius:0 0 4px 0;">跳转到画布</a>
+
 <input type="file" id="importInput" style="display: none;" accept=".json,.mindflow">
 
 <div class="app-container">
@@ -24,15 +28,15 @@
         <div class="sidebar-header">
             <div class="brand">MindFlow</div>
             <div class="project-control">
-                <label for="projSelect"></label><select id="projSelect" class="project-select">
+                <label for="projSelect" class="sr-only">选择项目</label><select id="projSelect" class="project-select" aria-label="选择项目">
                 <option value="" disabled selected>正在加载...</option>
             </select>
                 <div class="search-box">
                     <span class="search-icon">🔍</span>
                     <label>
-                        <input type="text" class="search-input" placeholder="搜索资源..." oninput="app.ui.filterResources(this.value)">
+                        <input type="text" class="search-input" placeholder="搜索资源...">
                     </label>
-                    <select class="sort-select" onchange="app.ui.setSortMode(this.value)" title="排序方式">
+                    <select class="sort-select" title="排序方式" aria-label="排序方式">
                         <option value="created">创建时间</option>
                         <option value="updated">更新时间</option>
                         <option value="name">名称</option>
@@ -40,25 +44,25 @@
                     </select>
                 </div>
                 <div class="btn-group-mini">
-                    <button class="btn-icon" data-action="saveDisk" title="导出到本地磁盘">💾</button>
-                    <button class="btn-icon" data-action="openDisk" title="从磁盘打开项目">📂</button>
-                    <button class="btn-icon" data-action="duplicateProject" title="复制当前项目">📋</button>
-                    <button class="btn-icon danger" data-action="deleteProject" title="删除当前项目">🗑️</button>
+                    <button class="btn-icon" data-action="saveDisk" title="导出到本地磁盘" aria-label="导出到本地磁盘">💾</button>
+                    <button class="btn-icon" data-action="openDisk" title="从磁盘打开项目" aria-label="从磁盘打开项目">📂</button>
+                    <button class="btn-icon" data-action="duplicateProject" title="复制当前项目" aria-label="复制当前项目">📋</button>
+                    <button class="btn-icon danger" data-action="deleteProject" title="删除当前项目" aria-label="删除当前项目">🗑️</button>
                 </div>
             </div>
         </div>
 
         <div class="sidebar-content">
             <div id="tagFilterArea" class="tag-filter-area"></div>
-            <div id="resList" class="res-list tree-view">
+            <div id="resList" class="res-list tree-view" role="tree" aria-label="资源列表">
                 <div class="empty-tip">暂无资源</div>
             </div>
         </div>
 
         <div class="sidebar-footer" id="sidebarFooter">
-            <button class="btn-secondary" style="flex:1;" data-action="createFolder" title="新建文件夹">📁</button>
+            <button class="btn-secondary" style="flex:1;" data-action="createFolder" title="新建文件夹" aria-label="新建文件夹">📁</button>
             <button class="btn-primary" style="flex:3;" data-action="openResModal">+ 添加资源</button>
-            <button class="btn-secondary" style="flex:1;" data-action="toggleBatchMode" title="批量管理">☑️</button>
+            <button class="btn-secondary" style="flex:1;" data-action="toggleBatchMode" title="批量管理" aria-label="批量管理">☑️</button>
         </div>
         <div class="batch-bar" id="batchBar" style="display:none;">
             <span id="batchCount">已选 0 项</span>
@@ -93,7 +97,7 @@
                 <button class="tool-btn" data-action="openShortcuts" title="快捷键" aria-label="快捷键">⌨️</button>
             </div>
             <div class="node-search-bar" id="nodeSearchBar" style="display:none;">
-                <input type="text" id="nodeSearchInput" class="node-search-input" placeholder="搜索节点..." oninput="app.ui.searchNodes(this.value)">
+                <input type="text" id="nodeSearchInput" class="node-search-input" placeholder="搜索节点...">
                 <span id="nodeSearchCount" class="node-search-count"></span>
                 <button class="node-search-btn" data-action="nodeSearchPrev" title="上一个">▲</button>
                 <button class="node-search-btn" data-action="nodeSearchNext" title="下一个">▼</button>
@@ -109,15 +113,15 @@
     </div>
 </div>
 
-<div id="nodeBubble" class="node-bubble-container" style="display: none;">
-    <button class="bubble-btn action-edit" data-action="bubbleEdit" title="编辑节点">
+<div id="nodeBubble" class="node-bubble-container" style="display: none;" role="toolbar" aria-label="节点操作">
+    <button class="bubble-btn action-edit" data-action="bubbleEdit" title="编辑节点" aria-label="编辑节点">
         <span style="font-size: 16px;">✏️</span>
     </button>
     <!-- [New] 飞线按钮 -->
-    <button class="bubble-btn action-link" data-action="bubbleLink" title="创建连线">
+    <button class="bubble-btn action-link" data-action="bubbleLink" title="创建连线" aria-label="创建连线">
         <span style="font-size: 16px;">🪡</span>
     </button>
-    <button class="bubble-btn action-delete" data-action="bubbleDelete" title="删除节点">
+    <button class="bubble-btn action-delete" data-action="bubbleDelete" title="删除节点" aria-label="删除节点">
         <span style="font-size: 16px;">🗑️</span>
     </button>
 </div>
@@ -127,7 +131,7 @@
     <div class="modal-box" style="width: 360px;">
         <h3 id="inputModalTitle">输入</h3>
         <div class="form-group" style="margin-top: 20px;">
-            <label for="inputModalValue"></label><input type="text" id="inputModalValue" class="form-input" placeholder="" autocomplete="off">
+            <label for="inputModalValue" class="sr-only">输入内容</label><input type="text" id="inputModalValue" class="form-input" placeholder="" autocomplete="off">
         </div>
         <div class="modal-actions">
             <button class="btn-secondary" id="inputModalCancel">取消</button>
@@ -148,7 +152,7 @@
             <div class="form-group">
                 <label class="panel-label">资源类型</label>
                 <div class="select-wrapper">
-                    <select id="resType" class="form-input panel-select" onchange="app.ui.toggleResInput()">
+                    <select id="resType" class="form-input panel-select">
                         <option value="image">🖼️ 图片 (Image)</option>
                         <option value="md">📝 文档 (Markdown)</option>
                         <option value="code">💻 代码段 (Code)</option>
@@ -217,13 +221,13 @@
     <div class="panel-body">
         <div class="form-group">
             <label class="panel-label">名称</label>
-            <label for="nodeLabel"></label><input type="text" id="nodeLabel" class="form-input panel-input" placeholder="节点标题...">
+            <label for="nodeLabel" class="sr-only">节点名称</label><input type="text" id="nodeLabel" class="form-input panel-input" placeholder="节点标题...">
         </div>
 
         <div class="form-group">
             <label class="panel-label">关联资源</label>
             <div class="select-wrapper">
-                <label for="nodeResSelect"></label><select id="nodeResSelect" class="form-input panel-select"></select>
+                <label for="nodeResSelect" class="sr-only">关联资源</label><select id="nodeResSelect" class="form-input panel-select"></select>
                 <span class="select-arrow">▼</span>
             </div>
         </div>
@@ -238,33 +242,33 @@
 
         <div class="form-group form-row">
             <label class="panel-label">质感</label>
-            <div class="texture-options" style="display:flex;gap:6px;flex:1;">
-                <button type="button" class="texture-btn" data-texture="solid">纯色</button>
-                <button type="button" class="texture-btn" data-texture="glass">玻璃</button>
-                <button type="button" class="texture-btn" data-texture="acrylic">木纹</button>
-                <button type="button" class="texture-btn" data-texture="metallic">金属</button>
+            <div class="texture-options" role="radiogroup" aria-label="节点质感" style="display:flex;gap:6px;flex:1;">
+                <button type="button" class="texture-btn" data-texture="solid" role="radio" aria-checked="false">纯色</button>
+                <button type="button" class="texture-btn" data-texture="glass" role="radio" aria-checked="false">玻璃</button>
+                <button type="button" class="texture-btn" data-texture="acrylic" role="radio" aria-checked="false">木纹</button>
+                <button type="button" class="texture-btn" data-texture="metallic" role="radio" aria-checked="false">金属</button>
             </div>
         </div>
 
         <div class="form-group form-row">
             <label class="panel-label">布局</label>
-            <div class="layout-options" style="display:flex;gap:6px;flex:1;">
-                <button type="button" class="layout-btn" data-layout="icon">图标</button>
-                <button type="button" class="layout-btn" data-layout="card">卡片</button>
+            <div class="layout-options" role="radiogroup" aria-label="节点布局" style="display:flex;gap:6px;flex:1;">
+                <button type="button" class="layout-btn" data-layout="icon" role="radio" aria-checked="false">图标</button>
+                <button type="button" class="layout-btn" data-layout="card" role="radio" aria-checked="false">卡片</button>
             </div>
         </div>
 
         <div class="form-group form-row" id="shapeRatioRow">
             <label class="panel-label" id="shapeRatioLabel">形状</label>
-            <div id="shapeOptions" class="shape-options" style="display:flex;gap:6px;flex:1;">
-                <button type="button" class="shape-btn" data-shape="circle" title="圆形">●</button>
-                <button type="button" class="shape-btn" data-shape="rounded-rect" title="圆角方形">▢</button>
+            <div id="shapeOptions" class="shape-options" role="radiogroup" aria-label="节点形状" style="display:flex;gap:6px;flex:1;">
+                <button type="button" class="shape-btn" data-shape="circle" title="圆形" role="radio" aria-checked="false">●</button>
+                <button type="button" class="shape-btn" data-shape="rounded-rect" title="圆角方形" role="radio" aria-checked="false">▢</button>
             </div>
-            <div id="ratioOptions" class="ratio-options" style="display:none;gap:6px;flex:1;">
-                <button type="button" class="ratio-btn" data-ratio="1:1">1:1</button>
-                <button type="button" class="ratio-btn" data-ratio="3:4">3:4</button>
-                <button type="button" class="ratio-btn" data-ratio="4:3">4:3</button>
-                <button type="button" class="ratio-btn" data-ratio="16:9">16:9</button>
+            <div id="ratioOptions" class="ratio-options" role="radiogroup" aria-label="卡片比例" style="display:none;gap:6px;flex:1;">
+                <button type="button" class="ratio-btn" data-ratio="1:1" role="radio" aria-checked="false">1:1</button>
+                <button type="button" class="ratio-btn" data-ratio="3:4" role="radio" aria-checked="false">3:4</button>
+                <button type="button" class="ratio-btn" data-ratio="4:3" role="radio" aria-checked="false">4:3</button>
+                <button type="button" class="ratio-btn" data-ratio="16:9" role="radio" aria-checked="false">16:9</button>
             </div>
         </div>
 
@@ -292,7 +296,7 @@
     </div>
 </div>
 
-<div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="true"></div>
+<div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="false"></div>
 
 <!-- [P1-3] Inline edit input for node labels -->
 <input type="text" id="inlineEditInput" class="inline-edit-input" style="display:none;">
@@ -338,27 +342,5 @@
     </div>
 </div>
 
-<script>
-    if (window.innerWidth < 768) document.getElementById('sidebar').classList.add('closed');
-    else document.getElementById('sidebar').classList.remove('closed');
-
-    if(localStorage.getItem('theme') === 'dark') {
-        document.body.setAttribute('data-theme', 'dark');
-    }
-
-    if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-            let refreshing = false;
-            navigator.serviceWorker.addEventListener('controllerchange', () => {
-                if (refreshing) return;
-                refreshing = true;
-                window.location.reload();
-            });
-            navigator.serviceWorker.register('sw.js')
-                .then(registration => { console.log('SW Registered:', registration.scope); })
-                .catch(err => { console.log('SW Registration Failed:', err); });
-        });
-    }
-</script>
 </body>
 </html>

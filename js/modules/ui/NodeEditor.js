@@ -14,15 +14,17 @@ export class NodeEditor {
         // Shape buttons
         document.querySelectorAll('.shape-btn').forEach(btn => {
             btn.addEventListener('click', () => {
-                document.querySelectorAll('.shape-btn').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('.shape-btn').forEach(b => { b.classList.remove('active'); b.setAttribute('aria-checked', 'false'); });
                 btn.classList.add('active');
+                btn.setAttribute('aria-checked', 'true');
             });
         });
         // Layout buttons — also toggle shape/ratio row
         document.querySelectorAll('.layout-btn').forEach(btn => {
             btn.addEventListener('click', () => {
-                document.querySelectorAll('.layout-btn').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('.layout-btn').forEach(b => { b.classList.remove('active'); b.setAttribute('aria-checked', 'false'); });
                 btn.classList.add('active');
+                btn.setAttribute('aria-checked', 'true');
                 const isCard = btn.dataset.layout === 'card';
                 document.getElementById('shapeOptions').style.display = isCard ? 'none' : 'flex';
                 document.getElementById('ratioOptions').style.display = isCard ? 'flex' : 'none';
@@ -33,15 +35,16 @@ export class NodeEditor {
         document.querySelectorAll('.texture-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 const wasActive = btn.classList.contains('active');
-                document.querySelectorAll('.texture-btn').forEach(b => b.classList.remove('active'));
-                if (!wasActive) btn.classList.add('active');
+                document.querySelectorAll('.texture-btn').forEach(b => { b.classList.remove('active'); b.setAttribute('aria-checked', 'false'); });
+                if (!wasActive) { btn.classList.add('active'); btn.setAttribute('aria-checked', 'true'); }
             });
         });
         // Ratio buttons
         document.querySelectorAll('.ratio-btn').forEach(btn => {
             btn.addEventListener('click', () => {
-                document.querySelectorAll('.ratio-btn').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('.ratio-btn').forEach(b => { b.classList.remove('active'); b.setAttribute('aria-checked', 'false'); });
                 btn.classList.add('active');
+                btn.setAttribute('aria-checked', 'true');
             });
         });
         // Color auto-enable on change
@@ -53,12 +56,13 @@ export class NodeEditor {
         document.getElementById('nodeColorReset').addEventListener('click', () => {
             this._colorReset = true;
             this._colorChanged = false;
-            const isDark = document.body.getAttribute('data-theme') === 'dark';
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
             document.getElementById('nodeColor').value = isDark ? '#818cf8' : '#6366f1';
         });
     }
 
     handleSaveNodeEdit() {
+        this._releaseFocus();
         const node = this.app.state.editingNode;
         if (node) {
             const label = document.getElementById('nodeLabel').value;
@@ -87,14 +91,14 @@ export class NodeEditor {
         document.getElementById('nodeLabel').value = node.label;
         const sel = document.getElementById('nodeResSelect');
         sel.innerHTML = '<option value="">(无)</option>' + this.app.state.resources.filter(r=>r.type!=='folder').map(r =>
-            `<option value="${r.id}" ${r.id===node.resId?'selected':''}>${r.name}</option>`
+            `<option value="${r.id}" ${r.id===node.resId?'selected':''}>${this.app.utils.escapeHtml(r.name)}</option>`
         ).join('');
 
         // Color
         this._colorChanged = false;
         this._colorReset = false;
         const colorInput = document.getElementById('nodeColor');
-        const isDark = document.body.getAttribute('data-theme') === 'dark';
+        const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
         if (colorInput) colorInput.value = node.color || (isDark ? '#818cf8' : '#6366f1');
 
         // Note
@@ -103,18 +107,24 @@ export class NodeEditor {
 
         // Shape
         document.querySelectorAll('.shape-btn').forEach(btn => {
-            btn.classList.toggle('active', btn.dataset.shape === (node.shape || 'circle'));
+            const isActive = btn.dataset.shape === (node.shape || 'circle');
+            btn.classList.toggle('active', isActive);
+            btn.setAttribute('aria-checked', isActive ? 'true' : 'false');
         });
 
         // Texture
         document.querySelectorAll('.texture-btn').forEach(btn => {
-            btn.classList.toggle('active', btn.dataset.texture === (node.texture || ''));
+            const isActive = btn.dataset.texture === (node.texture || '');
+            btn.classList.toggle('active', isActive);
+            btn.setAttribute('aria-checked', isActive ? 'true' : 'false');
         });
 
         // Layout
         const isCard = (node.layout || 'icon') === 'card';
         document.querySelectorAll('.layout-btn').forEach(btn => {
-            btn.classList.toggle('active', btn.dataset.layout === (node.layout || 'icon'));
+            const isActive = btn.dataset.layout === (node.layout || 'icon');
+            btn.classList.toggle('active', isActive);
+            btn.setAttribute('aria-checked', isActive ? 'true' : 'false');
         });
         document.getElementById('shapeOptions').style.display = isCard ? 'none' : 'flex';
         document.getElementById('ratioOptions').style.display = isCard ? 'flex' : 'none';
@@ -122,7 +132,9 @@ export class NodeEditor {
 
         // Card ratio
         document.querySelectorAll('.ratio-btn').forEach(btn => {
-            btn.classList.toggle('active', btn.dataset.ratio === (node.cardRatio || '4:3'));
+            const isActive = btn.dataset.ratio === (node.cardRatio || '4:3');
+            btn.classList.toggle('active', isActive);
+            btn.setAttribute('aria-checked', isActive ? 'true' : 'false');
         });
 
         // Border style
@@ -139,6 +151,38 @@ export class NodeEditor {
             m.style.top = top + 'px';
         }
         m.style.display = 'flex';
+        this._trapFocus(m);
+    }
+
+    _trapFocus(panel) {
+        this._releaseFocus();
+        const focusable = panel.querySelectorAll('input, select, textarea, button, [tabindex]:not([tabindex="-1"])');
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+
+        this._focusTrapHandler = (e) => {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                this.handleSaveNodeEdit();
+                return;
+            }
+            if (e.key !== 'Tab') return;
+            if (e.shiftKey) {
+                if (document.activeElement === first) { e.preventDefault(); last.focus(); }
+            } else {
+                if (document.activeElement === last) { e.preventDefault(); first.focus(); }
+            }
+        };
+        document.addEventListener('keydown', this._focusTrapHandler);
+        first.focus();
+    }
+
+    _releaseFocus() {
+        if (this._focusTrapHandler) {
+            document.removeEventListener('keydown', this._focusTrapHandler);
+            this._focusTrapHandler = null;
+        }
     }
 
     showNodeBubble(node) {

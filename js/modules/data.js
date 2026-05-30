@@ -3,6 +3,15 @@
  * 职责：纯粹的数据操作 (CRUD) + 增量 Undo/Redo 命令模式
  */
 export class DataModule {
+    static linkEnd(link, end) {
+        const v = end === 'source' ? link.source : link.target;
+        return typeof v === 'object' ? v.id : v;
+    }
+
+    _generateId(prefix) {
+        return this.app.utils.genId(prefix);
+    }
+
     /**
      * @param {import('../types.js').App} app
      */
@@ -17,7 +26,7 @@ export class DataModule {
     _createResourceObject(data) {
         const timestamp = Date.now();
         return {
-            id: data.id || `${this.app.config.idPrefix.resource}${timestamp}_${Math.random().toString(36).substr(2, 9)}`,
+            id: data.id || this._generateId(this.app.config.idPrefix.resource),
             // @ts-ignore
             type: data.type || 'unknown',
             name: data.name || '未命名资源',
@@ -34,7 +43,7 @@ export class DataModule {
         let fixedCount = 0;
         this.app.state.resources = this.app.state.resources.map(res => {
             if (!res.id) {
-                res.id = `${this.app.config.idPrefix.resource}${Date.now()}_fix_${Math.random().toString(36).substr(2, 5)}`;
+                res.id = this._generateId(this.app.config.idPrefix.resource);
                 fixedCount++;
             }
             if (res.parentId === undefined) {
@@ -65,8 +74,8 @@ export class DataModule {
                 if (isUndo) {
                     this.app.state.nodes = this.app.state.nodes.filter(n => n.id !== cmd.node.id);
                     this.app.state.links = this.app.state.links.filter(l => {
-                        const sId = typeof l.source === 'object' ? l.source.id : l.source;
-                        const tId = typeof l.target === 'object' ? l.target.id : l.target;
+                        const sId = DataModule.linkEnd(l, 'source');
+                        const tId = DataModule.linkEnd(l, 'target');
                         return sId !== cmd.node.id && tId !== cmd.node.id;
                     });
                 } else {
@@ -82,8 +91,8 @@ export class DataModule {
                     this.app.state.nodes = this.app.state.nodes.filter(n => n.id !== cmd.node.id);
                     const nodeIds = new Set([cmd.node.id]);
                     this.app.state.links = this.app.state.links.filter(l => {
-                        const sId = typeof l.source === 'object' ? l.source.id : l.source;
-                        const tId = typeof l.target === 'object' ? l.target.id : l.target;
+                        const sId = DataModule.linkEnd(l, 'source');
+                        const tId = DataModule.linkEnd(l, 'target');
                         return !nodeIds.has(sId) && !nodeIds.has(tId);
                     });
                 }
@@ -111,13 +120,23 @@ export class DataModule {
                 if (isUndo) {
                     cmd.nodes.forEach(n => this.app.state.nodes.push({ ...n }));
                     cmd.links.forEach(l => this.app.state.links.push({ ...l }));
+                    // Demote orphans back to 'sub' now that their parent chain is restored
+                    (cmd.promotedOrphans || []).forEach(o => {
+                        const n = this.app.state.nodes.find(x => x.id === o.id);
+                        if (n) n.type = o.beforeType;
+                    });
                 } else {
                     const deadIds = new Set(cmd.nodes.map(n => n.id));
                     this.app.state.nodes = this.app.state.nodes.filter(n => !deadIds.has(n.id));
                     this.app.state.links = this.app.state.links.filter(l => {
-                        const sId = typeof l.source === 'object' ? l.source.id : l.source;
-                        const tId = typeof l.target === 'object' ? l.target.id : l.target;
+                        const sId = DataModule.linkEnd(l, 'source');
+                        const tId = DataModule.linkEnd(l, 'target');
                         return !deadIds.has(sId) && !deadIds.has(tId);
+                    });
+                    // Re-apply orphan promotion on redo
+                    (cmd.promotedOrphans || []).forEach(o => {
+                        const n = this.app.state.nodes.find(x => x.id === o.id);
+                        if (n) { n.type = 'root'; n.scale = 1; }
                     });
                 }
                 break;
@@ -125,8 +144,8 @@ export class DataModule {
             case 'addLink': {
                 if (isUndo) {
                     this.app.state.links = this.app.state.links.filter(l => {
-                        const sId = typeof l.source === 'object' ? l.source.id : l.source;
-                        const tId = typeof l.target === 'object' ? l.target.id : l.target;
+                        const sId = DataModule.linkEnd(l, 'source');
+                        const tId = DataModule.linkEnd(l, 'target');
                         return !(sId === cmd.link.source && tId === cmd.link.target);
                     });
                 } else {
@@ -139,8 +158,8 @@ export class DataModule {
                     this.app.state.links.push({ ...cmd.link });
                 } else {
                     this.app.state.links = this.app.state.links.filter(l => {
-                        const sId = typeof l.source === 'object' ? l.source.id : l.source;
-                        const tId = typeof l.target === 'object' ? l.target.id : l.target;
+                        const sId = DataModule.linkEnd(l, 'source');
+                        const tId = DataModule.linkEnd(l, 'target');
                         const cs = cmd.link.source;
                         const ct = cmd.link.target;
                         return !(sId === cs && tId === ct);
@@ -171,7 +190,11 @@ export class DataModule {
                 const res = this.app.state.resources.find(r => r.id === cmd.id);
                 if (res) {
                     const data = isUndo ? cmd.before : cmd.after;
+                    const contentChanging = data.content !== undefined && data.content !== res.content;
                     Object.keys(data).forEach(k => { res[k] = data[k]; });
+                    if (contentChanging && res.type === 'image' && this.app.graph && this.app.graph.imageCache) {
+                        this.app.graph.imageCache.delete(res.id);
+                    }
                 }
                 this.app.eventBus.emit('resources:updated');
                 break;
@@ -191,8 +214,8 @@ export class DataModule {
                     const ids = new Set(cmd.newNodes.map(n => n.id));
                     this.app.state.nodes = this.app.state.nodes.filter(n => !ids.has(n.id));
                     this.app.state.links = this.app.state.links.filter(l => {
-                        const sId = typeof l.source === 'object' ? l.source.id : l.source;
-                        const tId = typeof l.target === 'object' ? l.target.id : l.target;
+                        const sId = DataModule.linkEnd(l, 'source');
+                        const tId = DataModule.linkEnd(l, 'target');
                         return !ids.has(sId) && !ids.has(tId);
                     });
                 } else {
@@ -304,8 +327,14 @@ export class DataModule {
                     }
                 });
                 if (Object.keys(after).length === 0) return;
+                const contentChanged = after.content !== undefined && after.content !== before.content;
+                const isImage = (after.type || res.type) === 'image';
                 Object.assign(res, restData);
                 res.updated = Date.now();
+                // Invalidate image cache so nodes pointing to this resource re-render with new content
+                if (isImage && contentChanged && this.app.graph && this.app.graph.imageCache) {
+                    this.app.graph.imageCache.delete(res.id);
+                }
                 this._pushCommand({ type: 'updateResource', id, before, after });
                 this._notifyResourceUpdate('资源已更新');
             } else {
@@ -429,34 +458,50 @@ export class DataModule {
         const deadNodeSet = new Set(nodeIds);
         const deletedNodes = this.app.state.nodes.filter(n => deadNodeSet.has(n.id)).map(n => ({ ...n }));
         const deletedLinks = this.app.state.links.filter(l => {
-            const sId = typeof l.source === 'object' ? l.source.id : l.source;
-            const tId = typeof l.target === 'object' ? l.target.id : l.target;
+            const sId = DataModule.linkEnd(l, 'source');
+            const tId = DataModule.linkEnd(l, 'target');
             return deadNodeSet.has(sId) || deadNodeSet.has(tId);
         }).map(l => ({
-            source: typeof l.source === 'object' ? l.source.id : l.source,
-            target: typeof l.target === 'object' ? l.target.id : l.target,
+            source: DataModule.linkEnd(l, 'source'),
+            target: DataModule.linkEnd(l, 'target'),
             type: l.type
         }));
 
-        this._pushCommand({ type: 'batchDelete', nodes: deletedNodes, links: deletedLinks });
+        // Identify orphans: surviving 'sub' nodes whose only incoming structure parent was deleted.
+        const survivingLinks = this.app.state.links.filter(l => {
+            const sId = DataModule.linkEnd(l, 'source');
+            const tId = DataModule.linkEnd(l, 'target');
+            return !deadNodeSet.has(sId) && !deadNodeSet.has(tId);
+        });
+        const hasStructureParent = new Set();
+        survivingLinks.forEach(l => {
+            if ((l.type || 'structure') !== 'structure') return;
+            hasStructureParent.add(DataModule.linkEnd(l, 'target'));
+        });
+        const promotedOrphans = this.app.state.nodes
+            .filter(n => !deadNodeSet.has(n.id) && n.type === 'sub' && !hasStructureParent.has(n.id))
+            .map(n => ({ id: n.id, beforeType: n.type }));
+
+        this._pushCommand({
+            type: 'batchDelete',
+            nodes: deletedNodes,
+            links: deletedLinks,
+            promotedOrphans
+        });
 
         // [P0-4] Animate nodes shrinking before removal
-        let hasNodesToAnimate = false;
         nodeIds.forEach(id => {
             const node = this.app.state.nodes.find(n => n.id === id);
-            if (node) {
-                node._deleting = true;
-                hasNodesToAnimate = true;
-            }
+            if (node) node._deleting = true;
         });
 
         this.app.graph.needsRender = true;
 
-        // Immediately handle link removal and orphan promotion for the data model
-        this.app.state.links = this.app.state.links.filter(l => {
-            const sId = typeof l.source === 'object' ? l.source.id : l.source;
-            const tId = typeof l.target === 'object' ? l.target.id : l.target;
-            return !deadNodeSet.has(sId) && !deadNodeSet.has(tId);
+        // Immediately handle link removal + orphan promotion in the data model
+        this.app.state.links = survivingLinks;
+        promotedOrphans.forEach(o => {
+            const n = this.app.state.nodes.find(x => x.id === o.id);
+            if (n) { n.type = 'root'; n.scale = 1; }
         });
 
         const msg = nodeIds.length > 1 ? `已删除 ${nodeIds.length} 个节点` : '节点已删除';
@@ -471,8 +516,8 @@ export class DataModule {
 
         // 检查是否已存在
         const exists = this.app.state.links.some(l => {
-            const s = typeof l.source === 'object' ? l.source.id : l.source;
-            const t = typeof l.target === 'object' ? l.target.id : l.target;
+            const s = DataModule.linkEnd(l, 'source');
+            const t = DataModule.linkEnd(l, 'target');
             return (s === sourceId && t === targetId) || (s === targetId && t === sourceId);
         });
 
@@ -493,8 +538,8 @@ export class DataModule {
     deleteLink(link) {
         if (!link) return;
         const linkData = {
-            source: typeof link.source === 'object' ? link.source.id : link.source,
-            target: typeof link.target === 'object' ? link.target.id : link.target,
+            source: DataModule.linkEnd(link, 'source'),
+            target: DataModule.linkEnd(link, 'target'),
             type: link.type
         };
         this._pushCommand({ type: 'deleteLink', link: linkData });
@@ -541,13 +586,13 @@ export class DataModule {
         const copiedIds = new Set(nodesToCopy.map(n => n.id));
         this._clipboardLinks = this.app.state.links
             .filter(l => {
-                const sId = typeof l.source === 'object' ? l.source.id : l.source;
-                const tId = typeof l.target === 'object' ? l.target.id : l.target;
+                const sId = DataModule.linkEnd(l, 'source');
+                const tId = DataModule.linkEnd(l, 'target');
                 return copiedIds.has(sId) && copiedIds.has(tId);
             })
             .map(l => ({
-                source: typeof l.source === 'object' ? l.source.id : l.source,
-                target: typeof l.target === 'object' ? l.target.id : l.target,
+                source: DataModule.linkEnd(l, 'source'),
+                target: DataModule.linkEnd(l, 'target'),
                 type: l.type
             }));
 
@@ -566,7 +611,7 @@ export class DataModule {
         // Generate new IDs for pasted nodes
         const idMap = {};
         const newNodes = this._clipboard.map(n => {
-            const newId = this.app.config.idPrefix.node + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+            const newId = this._generateId(this.app.config.idPrefix.node);
             idMap[n.id] = newId;
             return {
                 id: newId, type: n.type, label: n.label || '未命名',

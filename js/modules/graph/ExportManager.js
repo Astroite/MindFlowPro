@@ -20,16 +20,24 @@ export class ExportManager {
 
         if (!isFinite(minX) || !isFinite(maxX)) return this.app.ui.toast('无法计算导出的边界');
 
-        const padding = 50;
-        const width = maxX - minX + padding * 2;
-        const height = maxY - minY + padding * 2;
+        const padding = config.exportPadding;
+        const maxExportSize = config.exportMaxSize;
+        let width = maxX - minX + padding * 2;
+        let height = maxY - minY + padding * 2;
+
+        // Clamp to max size, preserving aspect ratio
+        if (width > maxExportSize || height > maxExportSize) {
+            const scale = maxExportSize / Math.max(width, height);
+            width = Math.floor(width * scale);
+            height = Math.floor(height * scale);
+        }
 
         const canvas = document.createElement('canvas');
         canvas.width = width;
         canvas.height = height;
         const ctx = canvas.getContext("2d", { colorSpace: "srgb" });
 
-        const isDark = document.body.getAttribute('data-theme') === 'dark';
+        const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
         ctx.fillStyle = isDark ? '#18181b' : '#f3f3f3';
         ctx.fillRect(0, 0, width, height);
 
@@ -52,7 +60,7 @@ export class ExportManager {
 
         this.app.state.nodes.forEach(n => {
             if (isNaN(n.x) || isNaN(n.y)) return;
-            this.app.graph.nodeRenderer.drawNode(ctx, n);
+            this.app.graph.nodeRenderer.drawNode(ctx, n, isDark);
         });
 
         ctx.restore();
@@ -74,9 +82,15 @@ export class ExportManager {
             minX=Math.min(minX,n.x-r); maxX=Math.max(maxX,n.x+r);
             minY=Math.min(minY,n.y-r); maxY=Math.max(maxY,n.y+r);
         });
-        const pad=50, w=maxX-minX+pad*2, h=maxY-minY+pad*2;
+        const pad=config.exportPadding;
+        let w=maxX-minX+pad*2, h=maxY-minY+pad*2;
+        const maxExportSize=config.exportMaxSize;
+        if (w>maxExportSize||h>maxExportSize) {
+            const s=maxExportSize/Math.max(w,h);
+            w=Math.floor(w*s); h=Math.floor(h*s);
+        }
         const ox=-minX+pad, oy=-minY+pad;
-        const isDark = document.body.getAttribute('data-theme')==='dark';
+        const isDark = document.documentElement.getAttribute('data-theme')==='dark';
         const colors = isDark ? config.colorsDark : config.colors;
         const escX = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
         const safeColor = c => (/^#[0-9a-fA-F]{3,8}$/.test(c) || /^rgba?\([\d\s.,/%]+\)$/.test(c)) ? c : '#888';
@@ -89,11 +103,9 @@ export class ExportManager {
             const sx=s.x+ox, sy=s.y+oy, tx=t.x+ox, ty=t.y+oy;
             if (l.type==='cross') {
                 if (!this.app.state.showCrossLinks) return;
-                const dx=t.x-s.x, dy=t.y-s.y, dist=Math.sqrt(dx*dx+dy*dy);
+                const { cpX: rawCpX, cpY: rawCpY, dist } = this.app.graph.linkRenderer.getBezierControlPoint(s, t);
                 if (dist===0) return;
-                const offset=Math.min(dist*0.2,150);
-                const nx=-dy/dist, ny=dx/dist;
-                const cpx=(sx+tx)/2+nx*offset, cpy=(sy+ty)/2+ny*offset;
+                const cpx=rawCpX+ox, cpy=rawCpY+oy;
                 const tr=(t.type==='root'?config.nodeRadius:config.subRadius)+5;
                 const angle=Math.atan2(ty-cpy,tx-cpx);
                 const ax=tx-tr*Math.cos(angle), ay=ty-tr*Math.sin(angle);
