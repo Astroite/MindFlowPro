@@ -80,6 +80,7 @@ export class GraphModule {
 
         this.bindEvents();
         this.resize();
+        this.initSelectionHud();
         requestAnimationFrame(() => this.renderLoop());
     }
 
@@ -115,6 +116,39 @@ export class GraphModule {
         const h = this.height || window.innerHeight;
         this.app.state.camera = { x: w / 2, y: h / 2, k: 1 };
         this.needsRender = true;
+    }
+
+    fitToScreen() {
+        if (this.app.state.nodes.length === 0) return this.resetCamera();
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        this.app.state.nodes.forEach(n => {
+            if (isNaN(n.x) || isNaN(n.y)) return;
+            const r = (n.type === 'root' ? config.nodeRadius : config.subRadius) * (n.scale || 1);
+            minX = Math.min(minX, n.x - r); maxX = Math.max(maxX, n.x + r);
+            minY = Math.min(minY, n.y - r); maxY = Math.max(maxY, n.y + r);
+        });
+        if (!isFinite(minX)) return this.resetCamera();
+        const pad = 60;
+        const k = Math.min(this.width / (maxX - minX + pad * 2), this.height / (maxY - minY + pad * 2), 2);
+        this.app.state.camera.k = k;
+        this.app.state.camera.x = this.width / 2 - ((minX + maxX) / 2) * k;
+        this.app.state.camera.y = this.height / 2 - ((minY + maxY) / 2) * k;
+        this.needsRender = true;
+    }
+
+    initSelectionHud() {
+        const hud = document.createElement('div');
+        hud.id = 'selectionHud';
+        Object.assign(hud.style, {
+            position: 'absolute', top: '12px', left: '50%', transform: 'translateX(-50%)',
+            background: 'rgba(99,102,241,0.88)', color: 'white',
+            padding: '4px 14px', borderRadius: '20px',
+            fontSize: '12px', fontWeight: '600', letterSpacing: '0.3px',
+            display: 'none', zIndex: '50', pointerEvents: 'none',
+            boxShadow: '0 2px 8px rgba(99,102,241,0.3)', whiteSpace: 'nowrap'
+        });
+        this.app.dom.canvasWrapper.appendChild(hud);
+        this.selectionHud = hud;
     }
 
     updateSimulation() {
@@ -190,6 +224,17 @@ export class GraphModule {
             return;
         }
         this.needsRender = false;
+
+        // Update selection HUD
+        if (this.selectionHud) {
+            const n = this.app.state.selectedNodes.size;
+            if (n > 1) {
+                this.selectionHud.textContent = `${n} 个节点已选中  ·  Delete 删除  ·  拖动移动`;
+                this.selectionHud.style.display = 'block';
+            } else {
+                this.selectionHud.style.display = 'none';
+            }
+        }
 
         const dpr = this.dpr || 1;
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -505,6 +550,9 @@ export class GraphModule {
                 this.app.state.isLinking = false;
                 this.app.state.linkingSourceNode = null;
                 this.app.ui.toast('已取消连线');
+            }
+            if (e.key === 'f' || e.key === 'F') {
+                this.fitToScreen();
             }
         });
     }
