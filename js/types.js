@@ -41,6 +41,9 @@
  * @property {'image'|'md'|'code'|'color'|'audio'|'link'|'folder'|'unknown'} type - 资源类型
  * @property {string} name - 资源名称
  * @property {string|null} content - 资源内容 (URL, Base64, 文本等)
+ * @property {{kind: 'workspace', path: string, originalName?: string, mime?: string, size?: number, updated?: number}|null} [fileRef] - 本地工作区文件引用
+ * @property {string|null} [mime] - 资源 MIME 类型
+ * @property {number|null} [size] - 文件大小
  * @property {string|null} parentId - 父文件夹ID
  * @property {number} created - 创建时间戳
  * @property {number} updated - 更新时间戳
@@ -60,12 +63,17 @@
  * @property {Node|null} bubbleNode - 当前显示气泡菜单的节点
  * @property {Node|null} editingNode - 当前正在编辑的节点
  * @property {string|null} tempFileBase64 - 临时文件数据 (上传时用)
+ * @property {File|null} tempResourceFile - 临时选择的原始文件
  * @property {Node|null} hoverNode - 当前鼠标悬停的节点
  * @property {number|null} tooltipTimer - 预览框的定时器
  * @property {string|null} editingResId - 当前正在编辑的资源ID
  * @property {Set<string>} expandedFolders - 侧边栏展开的文件夹ID集合
  * @property {string|null} draggedResId - 当前拖拽的资源ID
  * @property {any} fileHandle - File System Access API Handle
+ * @property {any} workspaceHandle - File System Access API 目录 Handle
+ * @property {string} workspaceName - 本地工作区名称
+ * @property {boolean} workspaceMode - 是否正在使用本地工作区
+ * @property {string} workspaceProjectFileName - 工作区项目文件名
  * @property {string} searchKeyword - 资源搜索关键词
  * @property {boolean} isDirty - 是否有未保存的更改
  * @property {any} saveTimer - 自动保存定时器

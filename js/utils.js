@@ -45,7 +45,7 @@ export const utils = {
     isSafeUrl(url) {
         if (typeof url !== 'string') return false;
         const trimmed = url.trim().toLowerCase();
-        return trimmed.startsWith('https:') || trimmed.startsWith('data:image/') || trimmed.startsWith('blob:');
+        return trimmed.startsWith('https:') || trimmed.startsWith('data:image/') || trimmed.startsWith('data:audio/') || trimmed.startsWith('blob:');
     },
 
     // 图片压缩：限制最大宽高，转换为 JPEG。失败时 reject，调用方需处理

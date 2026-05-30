@@ -26,6 +26,7 @@ export class UIModule {
         this.setupInputModal();
         this.nodeEditor.setupShapeLayoutButtons();
         this._wireResourceTreeEvents();
+        this.updateWorkspaceStatus();
 
         this.app.eventBus.on('resources:updated', () => this.renderResourceTree());
         this.app.eventBus.on('nodes:deleted', () => {
@@ -162,6 +163,7 @@ export class UIModule {
             const actions = {
                 saveDisk: () => this.app.storage.triggerSaveDisk(),
                 openDisk: () => this.app.storage.triggerOpenDisk(),
+                openWorkspace: () => this.handleWorkspaceAction(),
                 duplicateProject: () => this.duplicateCurrentProject(),
                 deleteProject: () => this.confirmDeleteProject(),
                 createFolder: () => this.handleCreateFolder(),
@@ -220,13 +222,19 @@ export class UIModule {
 
         document.getElementById('resFile').addEventListener('change', async (e) => {
             const f = e.target.files[0]; if (!f) return;
+            this.app.state.tempResourceFile = f;
             const isImage = f.type.startsWith('image/');
-            if (isImage && f.size > config.maxImageSizeMB * 1024 * 1024) {
+            if (isImage && !this.app.storage.isWorkspaceActive() && f.size > config.maxImageSizeMB * 1024 * 1024) {
                 const ok = await this.confirmDialog(`图片超过 ${config.maxImageSizeMB}MB，将自动压缩，是否继续？`);
                 if (!ok) {
                     e.target.value = '';
+                    this.app.state.tempResourceFile = null;
                     return;
                 }
+            }
+            if (this.app.storage.isWorkspaceActive()) {
+                this.app.state.tempFileBase64 = null;
+                return;
             }
             const reader = new FileReader();
             reader.onload = ev => this.app.state.tempFileBase64 = ev.target.result;
@@ -328,7 +336,8 @@ export class UIModule {
         h += `<option value="__new__" style="color:#667eea; font-weight:bold;">+ 新建项目</option>`;
         this.app.state.projectsIndex.forEach(p => {
             const isSelected = p.id === this.app.state.currentId ? 'selected' : '';
-            h += `<option value="${p.id}" ${isSelected}>  ${this.app.utils.escapeHtml(p.name)}</option>`;
+            const suffix = p.workspace ? ' [工作区]' : '';
+            h += `<option value="${p.id}" ${isSelected}>  ${this.app.utils.escapeHtml(p.name + suffix)}</option>`;
         });
         sel.innerHTML = h;
     }
@@ -352,6 +361,7 @@ export class UIModule {
         rootFolders.forEach(f => { html += this._renderFolderHtml(f, resources, keyword, activeTag, 0); });
         rootFiles.forEach(f => { html += this.createResItemHtml(f, keyword); });
         container.innerHTML = html || '<div class="empty-tip">没有匹配的资源</div>';
+        this._hydrateResourceThumbs();
         this._renderTagFilter();
     }
 
@@ -508,11 +518,15 @@ export class UIModule {
     }
 
     createResItemHtml(r, keyword) {
-        const isImagePreview = r.type === 'image' && this.app.utils.isSafeUrl(r.content);
+        const previewUrl = r.type === 'image' ? this.app.storage.getCachedResourceUrl(r) : null;
+        const isImagePreview = r.type === 'image' && !!previewUrl;
+        const needsThumb = r.type === 'image' && !previewUrl && r.fileRef;
         const icon = isImagePreview
-            ? `<img class="res-thumb" src="${this.app.utils.escapeHtml(r.content)}" alt="" loading="lazy" decoding="async" draggable="false">`
+            ? `<img class="res-thumb" src="${this.app.utils.escapeHtml(previewUrl)}" alt="" loading="lazy" decoding="async" draggable="false">`
+            : needsThumb
+                ? `<img class="res-thumb" data-res-thumb-id="${this.app.utils.escapeHtml(r.id)}" alt="" loading="lazy" decoding="async" draggable="false">`
             : iconSvg(resourceIconName(r.type), { className: 'mf-icon res-type-icon' });
-        const iconClass = isImagePreview ? 'res-icon res-thumbnail' : 'res-icon';
+        const iconClass = (isImagePreview || needsThumb) ? 'res-icon res-thumbnail' : 'res-icon';
 
         const tagsHtml = r.tags && r.tags.length ? `<div class="res-tags">${r.tags.map(t=>`<span class="res-tag">${this.app.utils.escapeHtml(t)}</span>`).join('')}</div>` : '';
 
@@ -538,6 +552,20 @@ export class UIModule {
                 </div>
             </div>
         `;
+    }
+
+    _hydrateResourceThumbs() {
+        const imgs = this.app.dom.resList.querySelectorAll('img[data-res-thumb-id]');
+        imgs.forEach(async img => {
+            const res = this.app.state.resources.find(r => r.id === img.dataset.resThumbId);
+            if (!res) return;
+            try {
+                const url = await this.app.storage.resolveResourceUrl(res);
+                if (url && img.isConnected) img.src = url;
+            } catch (e) {
+                img.replaceWith(document.createRange().createContextualFragment(iconSvg(resourceIconName(res.type), { className: 'mf-icon res-type-icon' })));
+            }
+        });
     }
 
     highlightText(text, keyword) {
@@ -716,6 +744,7 @@ export class UIModule {
         parentSel.innerHTML = '<option value="">(根目录)</option>' + this._buildFolderOptionsHtml(folders, null, 0);
 
         this.app.state.tempFileBase64 = null;
+        this.app.state.tempResourceFile = null;
         document.getElementById('resFile').value = '';
         document.getElementById('resTextInput').value = '';
         document.getElementById('resTextArea').value = '';
@@ -757,8 +786,23 @@ export class UIModule {
         const tags = tagsRaw.split(',').map(t => t.trim()).filter(Boolean);
 
         let content = null;
+        let fileRef;
+        let mime = null;
+        let size = null;
+        const editingId = this.app.state.editingResId;
+        const resourceId = editingId || this.app.utils.genId(config.idPrefix.resource);
+        const selectedFile = this.app.state.tempResourceFile;
         if (type === 'image') {
-            if (this.app.state.tempFileBase64) {
+            if (selectedFile && this.app.storage.isWorkspaceActive()) {
+                this.toast('正在写入工作区...');
+                try {
+                    fileRef = await this.app.storage.saveResourceFile(resourceId, selectedFile);
+                    mime = fileRef.mime;
+                    size = fileRef.size;
+                } catch (err) {
+                    return this.toast('写入工作区失败: ' + err.message, 'error');
+                }
+            } else if (this.app.state.tempFileBase64) {
                 this.toast('正在处理图片...');
                 try {
                     content = await this.app.utils.compressImage(this.app.state.tempFileBase64);
@@ -768,17 +812,32 @@ export class UIModule {
                 if (content && content.length > config.maxImageSizeMB * 1024 * 1024) {
                     this.toast('图片过大，可能影响性能', 'error');
                 }
-            } else if (this.app.state.editingResId) {
-                const old = this.app.state.resources.find(r => r.id === this.app.state.editingResId);
+            } else if (editingId) {
+                const old = this.app.state.resources.find(r => r.id === editingId);
                 content = old ? old.content : null;
+                fileRef = old ? old.fileRef : null;
+                mime = old ? old.mime : null;
+                size = old ? old.size : null;
             } else {
                 return this.toast('请上传文件');
             }
         } else if (type === 'audio') {
-            if (this.app.state.tempFileBase64) content = this.app.state.tempFileBase64;
-            else if (this.app.state.editingResId) {
-                const old = this.app.state.resources.find(r => r.id === this.app.state.editingResId);
+            if (selectedFile && this.app.storage.isWorkspaceActive()) {
+                this.toast('正在写入工作区...');
+                try {
+                    fileRef = await this.app.storage.saveResourceFile(resourceId, selectedFile);
+                    mime = fileRef.mime;
+                    size = fileRef.size;
+                } catch (err) {
+                    return this.toast('写入工作区失败: ' + err.message, 'error');
+                }
+            } else if (this.app.state.tempFileBase64) content = this.app.state.tempFileBase64;
+            else if (editingId) {
+                const old = this.app.state.resources.find(r => r.id === editingId);
                 content = old ? old.content : null;
+                fileRef = old ? old.fileRef : null;
+                mime = old ? old.mime : null;
+                size = old ? old.size : null;
             }
             else return this.toast('请上传文件');
         } else if (type === 'color') {
@@ -791,12 +850,13 @@ export class UIModule {
         }
 
         this.app.data.saveResource({
-            id: this.app.state.editingResId,
-            type, name, content, parentId, tags: tags.length ? tags : []
+            id: resourceId,
+            type, name, content, fileRef, mime, size, parentId, tags: tags.length ? tags : []
         });
 
         this.closeModal('resModal');
         this.app.state.tempFileBase64 = null;
+        this.app.state.tempResourceFile = null;
         this.app.state.editingResId = null;
         document.getElementById('resFile').value = '';
     }
@@ -863,6 +923,41 @@ export class UIModule {
 
     // --- Sidebar & misc ---
 
+    async handleWorkspaceAction() {
+        if (this.app.storage.isWorkspaceActive()) {
+            const ok = await this.confirmDialog('断开当前本地工作区吗？');
+            if (ok) await this.app.storage.disconnectWorkspace();
+            return;
+        }
+        await this.app.storage.triggerOpenWorkspace();
+    }
+
+    updateWorkspaceStatus() {
+        const el = document.getElementById('workspaceStatus');
+        if (!el) return;
+        const label = el.querySelector('span:last-child');
+        const btn = document.querySelector('[data-action="openWorkspace"]');
+        if (!this.app.storage || !this.app.storage.supportsWorkspace()) {
+            el.dataset.state = 'warn';
+            if (label) label.textContent = '工作区不可用';
+            if (btn) btn.classList.add('disabled');
+            return;
+        }
+        if (this.app.storage.isWorkspaceActive()) {
+            el.dataset.state = 'on';
+            if (label) label.textContent = this.app.state.workspaceName || '本地工作区';
+            if (btn) btn.classList.add('active');
+        } else if (this.app.state.workspaceHandle) {
+            el.dataset.state = 'warn';
+            if (label) label.textContent = '工作区待授权';
+            if (btn) btn.classList.remove('active');
+        } else {
+            el.dataset.state = 'off';
+            if (label) label.textContent = '未连接工作区';
+            if (btn) btn.classList.remove('active', 'disabled');
+        }
+    }
+
     triggerImport() {
         document.getElementById('importInput').click();
     }
@@ -891,15 +986,20 @@ export class UIModule {
         }
     }
 
-    openViewer(resId) {
+    async openViewer(resId) {
         const res = this.app.state.resources.find(r => r.id === resId);
         if (!res) return;
         document.getElementById('viewerTitle').innerHTML = `${iconSvg(resourceIconName(res.type))}${this.app.utils.escapeHtml(res.name)}`;
         const contentEl = document.getElementById('viewerContent');
         contentEl.querySelectorAll('audio').forEach(a => a.pause());
         if (res.type === 'image') {
-            if (!this.app.utils.isSafeUrl(res.content)) contentEl.textContent = '不安全的图片来源';
-            else contentEl.innerHTML = `<img src="${this.app.utils.escapeHtml(res.content)}" alt="${this.app.utils.escapeHtml(res.name)}">`;
+            try {
+                const url = await this.app.storage.resolveResourceUrl(res);
+                if (!url) contentEl.textContent = '图片文件不可用';
+                else contentEl.innerHTML = `<img src="${this.app.utils.escapeHtml(url)}" alt="${this.app.utils.escapeHtml(res.name)}">`;
+            } catch (e) {
+                contentEl.textContent = e.message || '图片文件不可用';
+            }
         } else if (res.type === 'md') {
             let html = '';
             if (typeof marked !== 'undefined') {
@@ -914,8 +1014,13 @@ export class UIModule {
         } else if (res.type === 'color') {
             contentEl.innerHTML = `<div style="width:160px;height:100px;background:${this.app.utils.escapeHtml(res.content)};border-radius:12px;margin:auto;box-shadow:var(--shadow-md)"></div><p style="text-align:center;margin-top:16px;font-family:monospace;font-size:24px;font-weight:bold;">${this.app.utils.escapeHtml(res.content)}</p>`;
         } else if (res.type === 'audio') {
-            if (!this.app.utils.isSafeUrl(res.content)) contentEl.textContent = '不安全的音频来源';
-            else contentEl.innerHTML = `<audio controls src="${this.app.utils.escapeHtml(res.content)}" style="margin:auto;"></audio>`;
+            try {
+                const url = await this.app.storage.resolveResourceUrl(res);
+                if (!url) contentEl.textContent = '音频文件不可用';
+                else contentEl.innerHTML = `<audio controls src="${this.app.utils.escapeHtml(url)}" style="margin:auto;"></audio>`;
+            } catch (e) {
+                contentEl.textContent = e.message || '音频文件不可用';
+            }
         } else if (res.type === 'link') {
             const safeUrl = this.app.utils.isSafeUrl(res.content) ? res.content : '#';
             contentEl.innerHTML = `<p style="word-break:break-all;margin-bottom:16px;color:var(--text-sub);">${this.app.utils.escapeHtml(res.content)}</p><a href="${this.app.utils.escapeHtml(safeUrl)}" target="_blank" style="display:inline-block;background:var(--primary);color:white;text-decoration:none;padding:10px 20px;border-radius:8px;">跳转到链接 </a>`;

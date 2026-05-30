@@ -1,6 +1,8 @@
 export const config = {
-    appVersion: '4.18.5',
+    appVersion: '4.19.0',
     dataVersion: 1, // 项目数据模型版本，用于迁移
+    workspaceProjectFile: 'project.mindflow.json',
+    workspaceAssetsDir: 'assets',
     nodeRadius: 40,
     subRadius: 30,
     linkDistance: 150,

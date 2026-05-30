@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' https: blob:; connect-src 'self' https:;">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' https: blob: data:; connect-src 'self' https:;">
     <title>MindFlow - 本地化视觉思维导图</title>
 
     <link rel="manifest" href="manifest.json">
@@ -46,8 +46,12 @@
                 <div class="btn-group-mini">
                     <button class="btn-icon" data-action="saveDisk" title="导出到本地磁盘" aria-label="导出到本地磁盘"><span data-icon="save"></span></button>
                     <button class="btn-icon" data-action="openDisk" title="从磁盘打开项目" aria-label="从磁盘打开项目"><span data-icon="open"></span></button>
+                    <button class="btn-icon" data-action="openWorkspace" title="打开本地工作区" aria-label="打开本地工作区"><span data-icon="folder"></span></button>
                     <button class="btn-icon" data-action="duplicateProject" title="复制当前项目" aria-label="复制当前项目"><span data-icon="copy"></span></button>
                     <button class="btn-icon danger" data-action="deleteProject" title="删除当前项目" aria-label="删除当前项目"><span data-icon="trash"></span></button>
+                </div>
+                <div id="workspaceStatus" class="workspace-status" data-state="off">
+                    <span data-icon="folder"></span><span>未连接工作区</span>
                 </div>
             </div>
         </div>

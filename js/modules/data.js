@@ -31,6 +31,9 @@ export class DataModule {
             type: data.type || 'unknown',
             name: data.name || '未命名资源',
             content: data.content || null,
+            fileRef: data.fileRef || null,
+            mime: data.mime || null,
+            size: data.size || null,
             parentId: data.parentId || null,
             created: data.created || timestamp,
             updated: timestamp,
@@ -50,6 +53,7 @@ export class DataModule {
                 res.parentId = null;
             }
             if (!res.tags) res.tags = [];
+            if (res.fileRef === undefined) res.fileRef = null;
             return res;
         });
 
@@ -191,9 +195,13 @@ export class DataModule {
                 if (res) {
                     const data = isUndo ? cmd.before : cmd.after;
                     const contentChanging = data.content !== undefined && data.content !== res.content;
+                    const fileChanging = data.fileRef !== undefined && JSON.stringify(data.fileRef) !== JSON.stringify(res.fileRef || null);
                     Object.keys(data).forEach(k => { res[k] = data[k]; });
-                    if (contentChanging && res.type === 'image' && this.app.graph && this.app.graph.imageCache) {
+                    if ((contentChanging || fileChanging) && res.type === 'image' && this.app.graph && this.app.graph.imageCache) {
                         this.app.graph.imageCache.delete(res.id);
+                    }
+                    if ((contentChanging || fileChanging) && this.app.storage && this.app.storage.revokeResourceUrl) {
+                        this.app.storage.revokeResourceUrl(res.id);
                     }
                 }
                 this.app.eventBus.emit('resources:updated');
@@ -317,23 +325,27 @@ export class DataModule {
         if (id) {
             const res = this.app.state.resources.find(r => r.id === id);
             if (res) {
-                const fields = ['name', 'content', 'type', 'parentId', 'tags'];
+                const fields = ['name', 'content', 'fileRef', 'mime', 'size', 'type', 'parentId', 'tags'];
                 const before = {};
                 const after = {};
                 fields.forEach(f => {
-                    if (restData[f] !== undefined) {
+                    if (restData[f] !== undefined && JSON.stringify(restData[f]) !== JSON.stringify(res[f])) {
                         before[f] = res[f];
                         after[f] = restData[f];
                     }
                 });
                 if (Object.keys(after).length === 0) return;
                 const contentChanged = after.content !== undefined && after.content !== before.content;
+                const fileChanged = after.fileRef !== undefined && JSON.stringify(after.fileRef) !== JSON.stringify(before.fileRef || null);
                 const isImage = (after.type || res.type) === 'image';
-                Object.assign(res, restData);
+                Object.assign(res, after);
                 res.updated = Date.now();
                 // Invalidate image cache so nodes pointing to this resource re-render with new content
-                if (isImage && contentChanged && this.app.graph && this.app.graph.imageCache) {
+                if (isImage && (contentChanged || fileChanged) && this.app.graph && this.app.graph.imageCache) {
                     this.app.graph.imageCache.delete(res.id);
+                }
+                if ((contentChanged || fileChanged) && this.app.storage && this.app.storage.revokeResourceUrl) {
+                    this.app.storage.revokeResourceUrl(res.id);
                 }
                 this._pushCommand({ type: 'updateResource', id, before, after });
                 this._notifyResourceUpdate('资源已更新');
@@ -420,6 +432,9 @@ export class DataModule {
         this.app.state.nodes.forEach(n => {
             if (n.resId && idsToDelete.includes(n.resId)) n.resId = null;
         });
+        if (this.app.storage && this.app.storage.revokeResourceUrl) {
+            idsToDelete.forEach(resId => this.app.storage.revokeResourceUrl(resId));
+        }
         this.app.state.resources = this.app.state.resources.filter(r => !idsToDelete.includes(r.id));
 
         return idsToDelete.length;

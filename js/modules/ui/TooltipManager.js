@@ -4,6 +4,7 @@ export class TooltipManager {
     constructor(app) {
         this.app = app;
         this.tooltipEl = null;
+        this._renderToken = 0;
     }
 
     initTooltip() {
@@ -33,8 +34,9 @@ export class TooltipManager {
         this.displayTooltip(resId, event.clientX + 10, event.clientY);
     }
 
-    displayTooltip(resId, x, y) {
+    async displayTooltip(resId, x, y) {
         clearTimeout(this.app.state.tooltipTimer);
+        const token = ++this._renderToken;
         const res = this.app.state.resources.find(r => r.id === resId);
         if (!res) return;
 
@@ -43,7 +45,13 @@ export class TooltipManager {
 
         let content = '';
         if (res.type === 'image') {
-            content = this.app.utils.isSafeUrl(res.content) ? `<img src="${this.app.utils.escapeHtml(res.content)}" style="max-width:100%; max-height:200px; display:block; border-radius:4px;">` : '不安全的图片来源';
+            content = '正在读取图片...';
+            try {
+                const url = await this.app.storage.resolveResourceUrl(res);
+                content = url ? `<img src="${this.app.utils.escapeHtml(url)}" style="max-width:100%; max-height:200px; display:block; border-radius:4px;">` : '图片文件不可用';
+            } catch (e) {
+                content = e.message || '图片文件不可用';
+            }
         }
         else if (res.type === 'md') {
             let html = '';
@@ -66,7 +74,13 @@ export class TooltipManager {
             content = `<div style="width:100px; height:60px; background-color:${this.app.utils.escapeHtml(res.content)}; border-radius:4px; border:1px solid ${borderC}; margin-bottom:5px;"></div><div style="text-align:center; font-family:monospace; font-weight:bold;">${this.app.utils.escapeHtml(res.content)}</div>`;
         }
         else if (res.type === 'audio') {
-            content = this.app.utils.isSafeUrl(res.content) ? `<audio controls src="${this.app.utils.escapeHtml(res.content)}" style="width:250px;"></audio>` : '不安全的音频来源';
+            content = '正在读取音频...';
+            try {
+                const url = await this.app.storage.resolveResourceUrl(res);
+                content = url ? `<audio controls src="${this.app.utils.escapeHtml(url)}" style="width:250px;"></audio>` : '音频文件不可用';
+            } catch (e) {
+                content = e.message || '音频文件不可用';
+            }
         }
         else if (res.type === 'link') {
             const linkSub = isDark ? '#a1a1aa' : '#555';
@@ -74,6 +88,7 @@ export class TooltipManager {
             content = `<div style="font-size:12px; color:${linkSub}; margin-bottom:8px; word-break:break-all;">${this.app.utils.escapeHtml(res.content)}</div><a href="${this.app.utils.escapeHtml(safeUrl)}" target="_blank" style="display:block; text-align:center; background:#667eea; color:white; text-decoration:none; padding:6px; border-radius:4px; font-size:12px;">跳转到链接 </a>`;
         }
 
+        if (token !== this._renderToken) return;
         this.tooltipEl.innerHTML = content;
         this.tooltipEl.style.display = 'block';
         this._positionTooltip(x, y);
@@ -91,6 +106,7 @@ export class TooltipManager {
 
     hideTooltip() {
         clearTimeout(this.app.state.tooltipTimer);
+        this._renderToken++;
         this.app.state.tooltipTimer = setTimeout(() => {
             if (this.tooltipEl) {
                 this.tooltipEl.querySelectorAll('audio').forEach(a => { a.pause(); a.currentTime = 0; });

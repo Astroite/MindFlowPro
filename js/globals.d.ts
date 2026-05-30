@@ -37,6 +37,7 @@ declare var app: import('./types.js').App;
 interface Window {
     showOpenFilePicker(options?: any): Promise<any[]>;
     showSaveFilePicker(options?: any): Promise<any>;
+    showDirectoryPicker(options?: any): Promise<any>;
 
     // 如果你在 window 上挂载了 app
     app: import('./types.js').App;

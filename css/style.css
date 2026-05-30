@@ -223,9 +223,42 @@ body {
 .btn-icon:focus-visible { box-shadow: var(--focus-ring); outline: none; }
 .btn-icon:hover { background: rgba(36, 86, 111, 0.10); color: var(--primary); border-color: rgba(36, 86, 111, 0.18); }
 .btn-icon:active { transform: scale(0.95); }
+.btn-icon.active { background: rgba(85, 111, 81, 0.14); color: var(--atlas-moss); border-color: rgba(85, 111, 81, 0.30); }
+.btn-icon.disabled { opacity: 0.45; filter: grayscale(1); }
 .btn-icon.danger:hover { background: #fee2e2; color: var(--danger); }
 .btn-icon .mf-icon { width: 18px; height: 18px; }
 [data-theme="dark"] .btn-icon.danger:hover { background: rgba(239, 68, 68, 0.2); }
+
+.workspace-status {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-height: 28px;
+    padding: 6px 9px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+    background: rgba(255,255,255,0.28);
+    color: var(--text-sub);
+    font-size: 12px;
+    overflow: hidden;
+}
+.workspace-status .mf-icon { width: 14px; height: 14px; }
+.workspace-status span:last-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.workspace-status[data-state="on"] {
+    color: var(--atlas-moss);
+    border-color: rgba(85, 111, 81, 0.28);
+    background: rgba(85, 111, 81, 0.10);
+}
+.workspace-status[data-state="warn"] {
+    color: var(--atlas-vermilion);
+    border-color: rgba(182, 75, 56, 0.30);
+    background: rgba(182, 75, 56, 0.10);
+}
 
 .btn-icon-sm {
     display: inline-flex; align-items: center; justify-content: center;

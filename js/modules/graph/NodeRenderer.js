@@ -498,12 +498,7 @@ export class NodeRenderer {
             ctx.beginPath();
             ctx.roundRect(x, y, w, imgH, [cornerR, cornerR, 0, 0]);
             ctx.clip();
-            if (!this.imageCache.has(res.id) && this.app.utils.isSafeUrl(res.content)) {
-                const img = new Image(); img.src = res.content;
-                img.onload = () => this._cacheSet(res.id, img);
-                img.onerror = () => { this._cacheSet(res.id, 'error'); };
-                this._cacheSet(res.id, 'loading');
-            }
+            if (!this.imageCache.has(res.id)) this.preloadImage(res.id);
             const img = this.imageCache.get(res.id);
             if (img && img !== 'loading' && img !== 'error' && img.width) {
                 const scaleImg = Math.max(w / img.width, imgH / img.height);
@@ -625,17 +620,24 @@ export class NodeRenderer {
     preloadImage(resId) {
         const res = this.app.state.resources.find(r => r.id === resId);
         if (!res || res.type !== 'image' || this.imageCache.has(res.id)) return;
-        if (!this.app.utils.isSafeUrl(res.content)) return;
-        const img = new Image(); img.src = res.content;
-        img.onload = () => { this._cacheSet(res.id, img); this.app.graph.needsRender = true; };
-        img.onerror = () => {
+        this._cacheSet(res.id, 'loading');
+        this.app.storage.resolveResourceUrl(res).then(url => {
+            if (!url) throw new Error('图片文件不可用');
+            const img = new Image();
+            img.onload = () => { this._cacheSet(res.id, img); this.app.graph.needsRender = true; };
+            img.onerror = () => {
+                this._cacheSet(res.id, 'error');
+                setTimeout(() => {
+                    if (this.imageCache.get(res.id) === 'error') this.imageCache.delete(res.id);
+                }, 30000);
+            };
+            img.src = url;
+        }).catch(() => {
             this._cacheSet(res.id, 'error');
-            // Clear the error entry after 30s so a later retry (e.g. transient data URL parse) can succeed
             setTimeout(() => {
                 if (this.imageCache.get(res.id) === 'error') this.imageCache.delete(res.id);
             }, 30000);
-        };
-        this._cacheSet(res.id, 'loading');
+        });
     }
 
     drawImageInNode(ctx, node, res, r, shape) {

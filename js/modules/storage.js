@@ -1,6 +1,9 @@
 import { config } from '../config.js';
 import { DataModule } from './data.js';
 
+const WORKSPACE_HANDLE_KEY = '__workspace_handle__';
+const WORKSPACE_PROJECT_ID_KEY = '__workspace_project_id__';
+
 export class StorageModule {
     /**
      * @param {import('../types.js').App} app
@@ -10,6 +13,7 @@ export class StorageModule {
         this._isLoading = false;
         this._saving = false;
         this._debouncedSave = this.app.utils.debounce(this.forceSave.bind(this), config.saveDebounceMs);
+        this._resourceUrlCache = new Map();
     }
 
     _serializeNode(n) {
@@ -70,6 +74,7 @@ export class StorageModule {
         try {
             localforage.config({ name: config.dbName, storeName: config.storeName });
             await this.loadIndex();
+            await this.restoreWorkspaceHandle();
             this._bindSaveGuards();
         } catch (e) {
             console.error('存储初始化失败:', e);
@@ -193,6 +198,8 @@ export class StorageModule {
         this.app.state.currentId = null;
         this.app.state.nodes = []; this.app.state.links = []; this.app.state.resources = [];
         this.app.state.fileHandle = null;
+        this.app.state.workspaceMode = false;
+        this.clearResourceUrlCache();
         this.app.state.selectedNodes.clear();
         this.app.state.undoStack = [];
         this.app.state.redoStack = [];
@@ -204,6 +211,7 @@ export class StorageModule {
         this.app.ui.renderResourceTree();
         this.app.dom.projTitleInput.value = '';
         this.app.ui.updateSaveStatus('已就绪');
+        if (this.app.ui.updateWorkspaceStatus) this.app.ui.updateWorkspaceStatus();
     }
 
     /**
@@ -244,9 +252,128 @@ export class StorageModule {
         return proj;
     }
 
+    _buildProjectSnapshot() {
+        const currentProjName = this.app.dom.projTitleInput.value || '未命名项目';
+        const cleanNodes = this.app.state.nodes
+            .filter(n => !n._deleting && !n._removeNow)
+            .map(n => this._serializeNode(n));
+        const cleanLinks = this.app.state.links.map(l => ({
+            source: DataModule.linkEnd(l, 'source'),
+            target: DataModule.linkEnd(l, 'target'),
+            type: l.type
+        }));
+        const cam = this.app.state.camera;
+        return {
+            id: this.app.state.currentId,
+            name: currentProjName,
+            updated: Date.now(),
+            dataVersion: config.dataVersion,
+            nodes: cleanNodes,
+            links: cleanLinks,
+            resources: this.app.state.resources,
+            camera: { x: cam.x, y: cam.y, k: cam.k },
+            workspace: this.app.state.workspaceMode ? {
+                file: this.app.state.workspaceProjectFileName || config.workspaceProjectFile
+            } : null
+        };
+    }
+
+    async _applyLoadedProject(id, proj, options = {}) {
+        const { workspace = false, workspaceName = '', toast = true } = options;
+
+        const validation = this._validateProject(proj);
+        if (!validation.valid) {
+            console.error('项目数据校验失败:', validation.errors);
+            this.app.ui.toast('项目数据已损坏: ' + validation.errors[0], 'error');
+        }
+
+        this._migrateProject(proj);
+
+        this.app.state.undoStack = [];
+        this.app.state.redoStack = [];
+        if (this.app.data) {
+            this.app.data._clipboard = [];
+            this.app.data._clipboardLinks = [];
+        }
+
+        this.app.state.currentId = id;
+        this.app.state.fileHandle = null;
+        this.app.state.workspaceMode = !!workspace;
+        if (workspace) {
+            this.app.state.workspaceName = workspaceName || this.app.state.workspaceHandle?.name || '';
+            this.app.state.workspaceProjectFileName = config.workspaceProjectFile;
+            localStorage.setItem(WORKSPACE_PROJECT_ID_KEY, id);
+        } else {
+            this.app.state.workspaceHandle = null;
+            this.app.state.workspaceName = '';
+            this.app.state.workspaceMode = false;
+            localStorage.removeItem(WORKSPACE_PROJECT_ID_KEY);
+        }
+
+        this.app.state.nodes = (proj.nodes || []).map(n => ({
+            ...n,
+            scale: 1,
+            texture: n.texture || (n.glass ? 'glass' : null),
+            shape: n.shape === 'pill' ? 'circle' : (n.shape || 'circle'),
+            layout: n.layout || 'icon',
+            borderStyle: n.borderStyle || 'solid',
+            color: n.color || null,
+            note: n.note || '',
+        }));
+        this.app.state.links = JSON.parse(JSON.stringify(proj.links || []));
+        this.app.state.resources = (proj.resources || []).map(r => ({
+            ...r,
+            content: r.content || null,
+            fileRef: r.fileRef || null,
+            mime: r.mime || r.fileRef?.mime || null,
+            size: r.size || r.fileRef?.size || null,
+            parentId: r.parentId || null,
+            tags: Array.isArray(r.tags) ? r.tags : [],
+        }));
+
+        if (this.app.data && this.app.data.normalizeResources) {
+            this.app.data.normalizeResources();
+        }
+
+        this.app.state.selectedNodes.clear();
+        this.app.ui.hideNodeBubble();
+
+        this.app.dom.projTitleInput.value = proj.name;
+        if (proj.camera && typeof proj.camera.x === 'number' && typeof proj.camera.y === 'number' && typeof proj.camera.k === 'number') {
+            this.app.state.camera = { x: proj.camera.x, y: proj.camera.y, k: proj.camera.k };
+        } else {
+            this.app.graph.resetCamera();
+        }
+
+        this.clearResourceUrlCache();
+        this.app.graph.imageCache.clear();
+        if (this.app.graph.nodeRenderer && this.app.graph.nodeRenderer.textureCache) {
+            this.app.graph.nodeRenderer.textureCache.clear();
+        }
+        this.app.state.searchKeyword = '';
+        this.app.ui.renderResourceTree();
+        if (toast) this.app.ui.toast(`${workspace ? '已打开工作区' : '已加载'}: ${proj.name}`);
+        this.app.graph.updateSimulation();
+        this.app.ui.updateSaveStatus(workspace ? '工作区已连接' : '已加载');
+        if (this.app.ui.updateWorkspaceStatus) this.app.ui.updateWorkspaceStatus();
+        this.app.ui.updateProjectSelect();
+
+        localStorage.setItem('lastOpenedProjectId', id);
+    }
+
     async loadProject(id) {
         this._isLoading = true;
         try {
+            if (id === localStorage.getItem(WORKSPACE_PROJECT_ID_KEY) && this.app.state.workspaceHandle) {
+                try {
+                    await this.loadWorkspaceFromHandle(this.app.state.workspaceHandle, false);
+                    return;
+                } catch (e) {
+                    console.warn('工作区自动恢复失败，改用 IndexedDB 镜像:', e);
+                    this.app.ui.toast('工作区需要重新授权，已加载本地镜像', 'error');
+                }
+            }
+
             const proj = await localforage.getItem(id);
             if (!proj) {
                 this.app.state.projectsIndex = this.app.state.projectsIndex.filter(p => p.id !== id);
@@ -254,71 +381,7 @@ export class StorageModule {
                 this.app.ui.updateProjectSelect();
                 throw new Error('项目数据丢失');
             }
-
-            // P0-5: Schema 校验 — 检测损坏数据
-            const validation = this._validateProject(proj);
-            if (!validation.valid) {
-                console.error('项目数据校验失败:', validation.errors);
-                this.app.ui.toast('项目数据已损坏: ' + validation.errors[0], 'error');
-                // 仍然尝试加载（降级），让 normalize 逻辑修复能修复的部分
-            }
-
-            // P3-29: 数据迁移
-            this._migrateProject(proj);
-
-            // Undo/redo and clipboard are scoped to a single project — wipe them
-            // so commands from the previous project cannot corrupt this one.
-            this.app.state.undoStack = [];
-            this.app.state.redoStack = [];
-            if (this.app.data) {
-                this.app.data._clipboard = [];
-                this.app.data._clipboardLinks = [];
-            }
-
-            this.app.state.currentId = id;
-            this.app.state.fileHandle = null;
-            this.app.state.nodes = (proj.nodes || []).map(n => ({
-                ...n,
-                scale: 1,
-                texture: n.texture || (n.glass ? 'glass' : null),
-                shape: n.shape === 'pill' ? 'circle' : (n.shape || 'circle'),
-                layout: n.layout || 'icon',
-                borderStyle: n.borderStyle || 'solid',
-                color: n.color || null,
-                note: n.note || '',
-            }));
-            this.app.state.links = JSON.parse(JSON.stringify(proj.links || []));
-            this.app.state.resources = (proj.resources || []).map(r => ({
-                ...r,
-                parentId: r.parentId || null,
-                tags: Array.isArray(r.tags) ? r.tags : [],
-            }));
-
-            if (this.app.data && this.app.data.normalizeResources) {
-                this.app.data.normalizeResources();
-            }
-
-            this.app.state.selectedNodes.clear();
-            this.app.ui.hideNodeBubble();
-
-            this.app.dom.projTitleInput.value = proj.name;
-            if (proj.camera && typeof proj.camera.x === 'number' && typeof proj.camera.y === 'number' && typeof proj.camera.k === 'number') {
-                this.app.state.camera = { x: proj.camera.x, y: proj.camera.y, k: proj.camera.k };
-            } else {
-                this.app.graph.resetCamera();
-            }
-            this.app.graph.imageCache.clear();
-            if (this.app.graph.nodeRenderer && this.app.graph.nodeRenderer.textureCache) {
-                this.app.graph.nodeRenderer.textureCache.clear();
-            }
-            this.app.state.searchKeyword = '';
-            this.app.ui.renderResourceTree();
-            this.app.ui.toast(`已加载: ${proj.name}`);
-            this.app.graph.updateSimulation();
-            this.app.ui.updateSaveStatus('已加载');
-            this.app.ui.updateProjectSelect();
-
-            localStorage.setItem('lastOpenedProjectId', id);
+            await this._applyLoadedProject(id, proj, { workspace: false });
 
         } catch (e) {
             this.app.ui.toast('加载失败: ' + e.message);
@@ -347,31 +410,13 @@ export class StorageModule {
 
         this._saving = true;
         this.app.ui.updateSaveStatus('保存中...');
-        const currentProjName = this.app.dom.projTitleInput.value || '未命名项目';
-
-        const cleanNodes = this.app.state.nodes
-            .filter(n => !n._deleting && !n._removeNow)
-            .map(n => this._serializeNode(n));
-        const cleanLinks = this.app.state.links.map(l => ({
-            source: DataModule.linkEnd(l, 'source'),
-            target: DataModule.linkEnd(l, 'target'),
-            type: l.type // [Fix] 保存连线类型，防止飞线变回普通连线
-        }));
-
-        const cam = this.app.state.camera;
-        const projData = {
-            id: this.app.state.currentId,
-            name: currentProjName,
-            updated: Date.now(),
-            dataVersion: config.dataVersion,
-            nodes: cleanNodes,
-            links: cleanLinks,
-            resources: this.app.state.resources,
-            camera: { x: cam.x, y: cam.y, k: cam.k }
-        };
+        const projData = this._buildProjectSnapshot();
 
         try {
             await localforage.setItem(this.app.state.currentId, projData);
+            if (this.app.state.workspaceMode && this.app.state.workspaceHandle) {
+                await this.saveWorkspaceProject(projData);
+            }
             this.app.state.isDirty = false;
             this.app.ui.updateSaveStatus('已保存 ' + new Date().toLocaleTimeString());
         } catch (e) {
@@ -381,6 +426,277 @@ export class StorageModule {
         } finally {
             this._saving = false;
         }
+    }
+
+    supportsWorkspace() {
+        return typeof window.showDirectoryPicker === 'function';
+    }
+
+    isWorkspaceActive() {
+        return !!(this.app.state.workspaceMode && this.app.state.workspaceHandle);
+    }
+
+    async restoreWorkspaceHandle() {
+        if (!this.supportsWorkspace()) return;
+        try {
+            const handle = await localforage.getItem(WORKSPACE_HANDLE_KEY);
+            if (!handle) return;
+            this.app.state.workspaceHandle = handle;
+            this.app.state.workspaceName = handle.name || '';
+            if (this.app.ui.updateWorkspaceStatus) this.app.ui.updateWorkspaceStatus();
+        } catch (e) {
+            console.warn('工作区句柄恢复失败:', e);
+        }
+    }
+
+    async _verifyPermission(handle, mode = 'readwrite', request = true) {
+        if (!handle) return false;
+        const opts = { mode };
+        if (typeof handle.queryPermission === 'function') {
+            const state = await handle.queryPermission(opts);
+            if (state === 'granted') return true;
+            if (!request) return false;
+        }
+        if (!request || typeof handle.requestPermission !== 'function') return false;
+        return await handle.requestPermission(opts) === 'granted';
+    }
+
+    _safeWorkspacePath(path) {
+        if (!path || typeof path !== 'string') throw new Error('资源路径无效');
+        const parts = path.replace(/\\/g, '/').split('/').filter(Boolean);
+        if (!parts.length || parts.some(p => p === '.' || p === '..' || /[<>:"|?*\x00-\x1F]/.test(p))) {
+            throw new Error('资源路径无效');
+        }
+        return parts;
+    }
+
+    async _getDirectoryHandle(path, create = false) {
+        let dir = this.app.state.workspaceHandle;
+        const parts = this._safeWorkspacePath(path);
+        for (const part of parts) {
+            dir = await dir.getDirectoryHandle(part, { create });
+        }
+        return dir;
+    }
+
+    async _getFileHandleByPath(path, create = false) {
+        const parts = this._safeWorkspacePath(path);
+        const fileName = parts.pop();
+        let dir = this.app.state.workspaceHandle;
+        for (const part of parts) {
+            dir = await dir.getDirectoryHandle(part, { create });
+        }
+        return dir.getFileHandle(fileName, { create });
+    }
+
+    _projectFilePayload(project) {
+        return {
+            meta: {
+                version: config.appVersion,
+                type: 'MindFlowWorkspaceProject',
+                exportedAt: Date.now()
+            },
+            project: {
+                ...project,
+                workspace: {
+                    assetsDir: config.workspaceAssetsDir,
+                    projectFile: config.workspaceProjectFile
+                }
+            }
+        };
+    }
+
+    _projectFromWorkspaceJson(json) {
+        const proj = json && json.project ? json.project : json;
+        if (!proj || typeof proj !== 'object') throw new Error('工作区项目文件无效');
+        if (!Array.isArray(proj.nodes)) proj.nodes = [];
+        if (!Array.isArray(proj.links)) proj.links = [];
+        if (!Array.isArray(proj.resources)) proj.resources = [];
+        if (!proj.id) proj.id = this.app.config.idPrefix.project + Date.now() + '_ws';
+        if (!proj.name) proj.name = this.app.state.workspaceName || '本地工作区';
+        return proj;
+    }
+
+    async _readWorkspaceProject() {
+        const fileHandle = await this._getFileHandleByPath(config.workspaceProjectFile, false);
+        const file = await fileHandle.getFile();
+        const text = await file.text();
+        return this._projectFromWorkspaceJson(JSON.parse(text));
+    }
+
+    _createInitialWorkspaceProject(workspaceName) {
+        if (this.app.state.currentId) {
+            return {
+                ...this._buildProjectSnapshot(),
+                name: this.app.dom.projTitleInput.value || workspaceName || '本地工作区'
+            };
+        }
+        return {
+            id: this.app.config.idPrefix.project + Date.now() + '_ws',
+            name: workspaceName || '本地工作区',
+            created: Date.now(),
+            updated: Date.now(),
+            dataVersion: config.dataVersion,
+            nodes: [],
+            links: [],
+            resources: [],
+            camera: { x: 0, y: 0, k: 1 }
+        };
+    }
+
+    async _upsertProjectMirror(project, workspace = false) {
+        await localforage.setItem(project.id, project);
+        const idx = this.app.state.projectsIndex.findIndex(p => p.id === project.id);
+        const entry = { id: project.id, name: project.name, workspace };
+        if (idx === -1) this.app.state.projectsIndex.push(entry);
+        else this.app.state.projectsIndex[idx] = { ...this.app.state.projectsIndex[idx], ...entry };
+        await this.saveIndex();
+    }
+
+    async loadWorkspaceFromHandle(handle, requestPermission = false) {
+        const granted = await this._verifyPermission(handle, 'readwrite', requestPermission);
+        if (!granted) throw new Error('需要授权才能打开工作区');
+
+        this.app.state.workspaceHandle = handle;
+        this.app.state.workspaceName = handle.name || '本地工作区';
+        this.app.state.workspaceProjectFileName = config.workspaceProjectFile;
+
+        let project;
+        try {
+            project = await this._readWorkspaceProject();
+        } catch (e) {
+            if (e.name !== 'NotFoundError') throw e;
+            project = this._createInitialWorkspaceProject(handle.name);
+            await this.saveWorkspaceProject(project);
+        }
+
+        project.name = project.name || handle.name || '本地工作区';
+        await this._upsertProjectMirror(project, true);
+        await this._applyLoadedProject(project.id, project, {
+            workspace: true,
+            workspaceName: handle.name || '本地工作区'
+        });
+        try { await localforage.setItem(WORKSPACE_HANDLE_KEY, handle); } catch (e) { console.warn('工作区句柄保存失败:', e); }
+        return project.id;
+    }
+
+    async triggerOpenWorkspace() {
+        if (!this.supportsWorkspace()) {
+            this.app.ui.toast('当前浏览器不支持本地工作区，请使用 Chrome 或 Edge', 'error');
+            return;
+        }
+        try {
+            const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+            await this.loadWorkspaceFromHandle(handle, true);
+        } catch (err) {
+            if (err.name !== 'AbortError') {
+                console.error(err);
+                this.app.ui.toast('打开工作区失败: ' + err.message, 'error');
+            }
+        }
+    }
+
+    async disconnectWorkspace() {
+        this.clearResourceUrlCache();
+        this.app.state.workspaceHandle = null;
+        this.app.state.workspaceName = '';
+        this.app.state.workspaceMode = false;
+        localStorage.removeItem(WORKSPACE_PROJECT_ID_KEY);
+        try { await localforage.removeItem(WORKSPACE_HANDLE_KEY); } catch (e) { console.warn(e); }
+        if (this.app.ui.updateWorkspaceStatus) this.app.ui.updateWorkspaceStatus();
+        this.app.ui.updateProjectSelect();
+        this.app.ui.toast('已断开本地工作区');
+    }
+
+    async saveWorkspaceProject(projectData) {
+        if (!this.app.state.workspaceHandle) throw new Error('工作区未连接');
+        const granted = await this._verifyPermission(this.app.state.workspaceHandle, 'readwrite', true);
+        if (!granted) throw new Error('没有工作区写入权限');
+        const fileHandle = await this._getFileHandleByPath(config.workspaceProjectFile, true);
+        const writable = await fileHandle.createWritable();
+        await writable.write(JSON.stringify(this._projectFilePayload(projectData), null, 2));
+        await writable.close();
+    }
+
+    _fileExt(file) {
+        const byName = (file.name || '').match(/\.([a-z0-9]{1,12})$/i);
+        if (byName) return '.' + byName[1].toLowerCase();
+        const byMime = {
+            'image/png': '.png',
+            'image/jpeg': '.jpg',
+            'image/webp': '.webp',
+            'image/gif': '.gif',
+            'audio/mpeg': '.mp3',
+            'audio/mp4': '.m4a',
+            'audio/ogg': '.ogg',
+            'audio/wav': '.wav',
+            'audio/webm': '.webm'
+        };
+        return byMime[file.type] || '';
+    }
+
+    async saveResourceFile(resourceId, file) {
+        if (!this.isWorkspaceActive()) throw new Error('工作区未连接');
+        const granted = await this._verifyPermission(this.app.state.workspaceHandle, 'readwrite', true);
+        if (!granted) throw new Error('没有工作区写入权限');
+
+        await this._getDirectoryHandle(config.workspaceAssetsDir, true);
+        const fileName = `${resourceId}${this._fileExt(file)}`;
+        const path = `${config.workspaceAssetsDir}/${fileName}`;
+        const fileHandle = await this._getFileHandleByPath(path, true);
+        const writable = await fileHandle.createWritable();
+        await writable.write(file);
+        await writable.close();
+
+        return {
+            kind: 'workspace',
+            path,
+            originalName: file.name || fileName,
+            mime: file.type || '',
+            size: file.size || 0,
+            updated: Date.now()
+        };
+    }
+
+    getCachedResourceUrl(res) {
+        if (!res) return null;
+        if (this.app.utils.isSafeUrl(res.content)) return res.content;
+        const cached = this._resourceUrlCache.get(res.id);
+        return cached ? cached.url : null;
+    }
+
+    async resolveResourceUrl(res) {
+        if (!res) return null;
+        if (this.app.utils.isSafeUrl(res.content)) return res.content;
+        if (!res.fileRef || res.fileRef.kind !== 'workspace' || !res.fileRef.path) return null;
+        if (!this.app.state.workspaceHandle) throw new Error('工作区未连接');
+
+        const key = `${res.fileRef.path}:${res.fileRef.updated || res.updated || 0}`;
+        const cached = this._resourceUrlCache.get(res.id);
+        if (cached && cached.key === key) return cached.url;
+
+        const granted = await this._verifyPermission(this.app.state.workspaceHandle, 'read', false);
+        if (!granted) throw new Error('需要重新授权工作区');
+
+        const fileHandle = await this._getFileHandleByPath(res.fileRef.path, false);
+        const file = await fileHandle.getFile();
+        const url = URL.createObjectURL(file);
+        this.revokeResourceUrl(res.id);
+        this._resourceUrlCache.set(res.id, { key, url });
+        return url;
+    }
+
+    revokeResourceUrl(resId) {
+        const cached = this._resourceUrlCache.get(resId);
+        if (cached) {
+            URL.revokeObjectURL(cached.url);
+            this._resourceUrlCache.delete(resId);
+        }
+    }
+
+    clearResourceUrlCache() {
+        this._resourceUrlCache.forEach(v => URL.revokeObjectURL(v.url));
+        this._resourceUrlCache.clear();
     }
 
     async importExternalProject(projData) {
@@ -473,19 +789,10 @@ export class StorageModule {
     async saveToHandle() {
         if (!this.app.state.currentId) return this.app.ui.toast('无数据可保存');
         const currentProjName = this.app.dom.projTitleInput.value || '未命名项目';
+        const project = this._buildProjectSnapshot();
         const exportData = {
             meta: { version: config.appVersion, type: 'MindFlowProject', exportedAt: Date.now() },
-            project: {
-                name: currentProjName,
-                nodes: this.app.state.nodes.map(n => this._serializeNode(n)),
-                links: this.app.state.links.map(l => ({
-                    source: DataModule.linkEnd(l, 'source'),
-                    target: DataModule.linkEnd(l, 'target'),
-                    type: l.type // [Fix] 导出文件时同样需要保存类型
-                })),
-                resources: this.app.state.resources,
-                camera: this.app.state.camera
-            }
+            project
         };
         const blob = new Blob([JSON.stringify(exportData, null, 2)], {type: 'application/json'});
 
